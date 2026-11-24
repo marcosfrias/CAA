@@ -44,6 +44,7 @@ import javafx.scene.shape.StrokeLineCap;
 import javafx.scene.shape.StrokeLineJoin;
 import javafx.scene.text.Font;
 import javafx.stage.FileChooser;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
@@ -850,9 +851,12 @@ public class TempController {
         }
         File firma = elegido.getFirma().isBlank()
                 ? null : data.resolverArchivo(elegido.getFirma()).toFile();
+        // Si la ventana de expediente está abierta, el diálogo debe colgar de ella:
+        // esa ventana es always-on-top y un diálogo con otro owner quedaría detrás.
+        Window duenio = ventanaPropia() != null ? ventanaPropia() : owner;
         DialogoExportacionExpediente.abrir(
                 elegido.getNombre(), contenido.getText(), imagenes, disposicionImagenes,
-                firma, elegido.getAnchoFirmaCm(), owner);
+                firma, elegido.getAnchoFirmaCm(), duenio);
     }
 
     /**
@@ -1143,7 +1147,33 @@ public class TempController {
         alert.setTitle("No se pudo agregar");
         alert.setHeaderText(null);
         alert.setContentText(message);
+
+        // Sin owner, el aviso se dibuja como ventana independiente y queda detrás
+        // de la ventana de expediente (que es always-on-top). Además, si no es
+        // modal, se pueden apilar varios avisos superpuestos.
+        Window owner = ventanaPropia();
+        if (owner != null) {
+            alert.initOwner(owner);
+        }
+        alert.initModality(Modality.APPLICATION_MODAL);
+        alert.setOnShown(evento -> {
+            Window ventanaAlerta = alert.getDialogPane().getScene().getWindow();
+            if (ventanaAlerta instanceof Stage) {
+                Stage stageAlerta = (Stage) ventanaAlerta;
+                stageAlerta.setAlwaysOnTop(true);
+                stageAlerta.toFront();
+                stageAlerta.requestFocus();
+            }
+        });
         alert.showAndWait();
+    }
+
+    /** Ventana de la vista de expediente, o null si todavía no está en escena. */
+    private Window ventanaPropia() {
+        if (pestanas != null && pestanas.getScene() != null) {
+            return pestanas.getScene().getWindow();
+        }
+        return null;
     }
 
     /**

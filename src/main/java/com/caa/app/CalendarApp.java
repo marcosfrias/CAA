@@ -24,6 +24,8 @@ import com.calendarfx.view.CalendarView;
 import com.calendarfx.view.CalendarSelector;
 import com.calendarfx.view.YearMonthView;
 import com.calendarfx.view.DateControl;
+import com.calendarfx.view.AllDayView;
+import com.calendarfx.view.VirtualGrid;
 import com.calendarfx.view.Messages;
 import com.calendarfx.model.Interval;
 import com.caa.app.FormularioModel;
@@ -55,6 +57,7 @@ import javafx.stage.Stage;
 import javafx.stage.Modality;
 import javafx.stage.Screen;
 import javafx.stage.Window;
+import javafx.util.Callback;
 import javafx.util.Duration;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
@@ -77,6 +80,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.Month;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -98,6 +102,9 @@ public class CalendarApp extends Application {
     private final List<CalendarSource> grupos = List.of(industrias, actividades);
     private final Map<Calendar, Style> estilos = new HashMap<>();
     private final Set<Entry<?>> entradas = new LinkedHashSet<>();
+    // Calendario que nunca se muestra: evita que CalendarFX abra su propio aviso
+    // ("no se puede crear el evento") cuando todavía no hay industrias.
+    private final Calendar calendarioAuxiliar = new Calendar("Sin industria");
     private final PauseTransition guardadoPendiente = new PauseTransition(Duration.millis(500));
     private Datos datos;
     private boolean cargando = false;
@@ -138,6 +145,7 @@ public class CalendarApp extends Application {
         // La fuente vacía mantiene espacio entre los grupos en el desplegable.
         calendarView.getCalendarSources().setAll(industrias, new CalendarSource(" "), actividades);
         instalarSelectorSoloIndustrias(calendarView);
+        instalarCreacionDeEventos(calendarView);
         configurarMenuContextualEvento(calendarView);
 
         iniciarReloj(calendarView);
@@ -412,6 +420,81 @@ public class CalendarApp extends Application {
         });
     }
 
+    /**
+     * Evita el aviso propio de CalendarFX (que se muestra con {@code show()}, no modal,
+     * y puede quedar detrás o apilarse) cuando se intenta crear un evento sin industrias.
+     * Si hay industrias, replica la creación de evento por defecto.
+     */
+    private void instalarCreacionDeEventos(CalendarView calendarView) {
+        Callback<DateControl, Calendar> proveedor = control ->
+                industrias.getCalendars().isEmpty()
+                        ? calendarioAuxiliar
+                        : industrias.getCalendars().get(0);
+
+        Callback<DateControl.CreateEntryParameter, Entry<?>> fabrica = param -> {
+            if (industrias.getCalendars().isEmpty()) {
+                mostrarAlerta(Alert.AlertType.WARNING, "Sin industrias",
+                        "Primero creá una industria para poder crear eventos.");
+                return null;
+            }
+            return crearEventoPorDefecto(param);
+        };
+
+        for (DateControl pagina : List.of(calendarView.getDayPage(), calendarView.getWeekPage(),
+                calendarView.getMonthPage(), calendarView.getYearPage())) {
+            pagina.setDefaultCalendarProvider(proveedor);
+            pagina.setEntryFactory(fabrica);
+        }
+    }
+
+    /** Misma lógica que el entry factory por defecto de CalendarFX. */
+    private static Entry<?> crearEventoPorDefecto(DateControl.CreateEntryParameter param) {
+        DateControl control = param.getDateControl();
+        ZonedDateTime tiempo = param.getZonedDateTime();
+        VirtualGrid grid = control.getVirtualGrid();
+        if (grid != null) {
+            java.time.DayOfWeek primerDia = control.getFirstDayOfWeek();
+            ZonedDateTime inferior = grid.adjustTime(tiempo, false, primerDia);
+            ZonedDateTime superior = grid.adjustTime(tiempo, true, primerDia);
+            if (java.time.Duration.between(tiempo, inferior).abs()
+                    .minus(java.time.Duration.between(tiempo, superior).abs()).isNegative()) {
+                tiempo = inferior;
+            } else {
+                tiempo = superior;
+            }
+        }
+
+        Entry<Object> entrada = new Entry<>(Messages.getString("DateControl.DEFAULT_ENTRY_TITLE"));
+        entrada.setInterval(new Interval(tiempo.toLocalDateTime(),
+                tiempo.toLocalDateTime().plusHours(1), tiempo.getZone()));
+        if (control instanceof AllDayView) {
+            entrada.setFullDay(true);
+        }
+        return entrada;
+    }
+
+    /** Aviso modal, con owner y siempre al frente, para que no quede detrás de la app. */
+    private void mostrarAlerta(Alert.AlertType tipo, String titulo, String mensaje) {
+        Alert alerta = new Alert(tipo);
+        alerta.setTitle(titulo);
+        alerta.setHeaderText(null);
+        alerta.setContentText(mensaje);
+        if (ventana != null) {
+            alerta.initOwner(ventana);
+        }
+        alerta.initModality(Modality.APPLICATION_MODAL);
+        alerta.setOnShown(evento -> {
+            Window ventanaAlerta = alerta.getDialogPane().getScene().getWindow();
+            if (ventanaAlerta instanceof Stage) {
+                Stage stageAlerta = (Stage) ventanaAlerta;
+                stageAlerta.setAlwaysOnTop(true);
+                stageAlerta.toFront();
+                stageAlerta.requestFocus();
+            }
+        });
+        alerta.showAndWait();
+    }
+
     /** Coloca los accesos al formulario y al expediente junto a la opción Repetir. */
     private void agregarBotonesJuntoARepetir(
             com.calendarfx.view.popover.EntryPopOverContentPane panel) {
@@ -476,12 +559,8 @@ public class CalendarApp extends Application {
         Object idActual = entrada.getProperties().get(PROPIEDAD_EXPEDIENTE);
         if (!(idActual instanceof String) || ((String) idActual).isBlank()
                 || !com.caa.documentos.Data.estaGuardado((String) idActual)) {
-            Alert alerta = new Alert(Alert.AlertType.WARNING);
-            alerta.setTitle("No se puede exportar");
-            alerta.setHeaderText(null);
-            alerta.setContentText("Abrí el expediente y pulsá Guardar antes de exportar.");
-            alerta.initOwner(ventana);
-            alerta.showAndWait();
+            mostrarAlerta(Alert.AlertType.WARNING, "No se puede exportar",
+                    "Abrí el expediente y pulsá Guardar antes de exportar.");
             return;
         }
         String idExpediente = (String) idActual;
@@ -559,11 +638,8 @@ public class CalendarApp extends Application {
             ventanasExpediente.put(idExpediente, demo);
             demo.show();
         } catch (IOException ex) {
-            Alert alerta = new Alert(Alert.AlertType.ERROR);
-            alerta.setTitle("No se pudo abrir Demo");
-            alerta.setHeaderText(null);
-            alerta.setContentText("No se pudo cargar la interfaz Demo: " + ex.getMessage());
-            alerta.showAndWait();
+            mostrarAlerta(Alert.AlertType.ERROR, "No se pudo abrir Demo",
+                    "No se pudo cargar la interfaz Demo: " + ex.getMessage());
         }
     }
 
