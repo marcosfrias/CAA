@@ -16,7 +16,7 @@
 <?import javafx.scene.layout.StackPane?>
 
 <BorderPane xmlns:fx="http://javafx.com/fxml"
-            fx:controller="com.eia.documentos.TempController">
+            fx:controller="com.caa.documentos.TempController">
     <top>
         <VBox>
             <Label fx:id="tituloVentana" text="Expediente" visible="false" managed="false"/>

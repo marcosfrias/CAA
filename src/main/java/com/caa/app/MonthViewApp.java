@@ -14,7 +14,7 @@
  *  limitations under the License.
  */
 
-package com.eia.app;
+package com.caa.app;
 
 import com.calendarfx.view.MonthView;
 import javafx.application.Application;

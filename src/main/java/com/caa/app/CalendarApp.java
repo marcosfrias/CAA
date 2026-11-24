@@ -13,7 +13,7 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-package com.eia.app;
+package com.caa.app;
 
 import com.calendarfx.model.Calendar;
 import com.calendarfx.model.Calendar.Style;
@@ -26,8 +26,8 @@ import com.calendarfx.view.YearMonthView;
 import com.calendarfx.view.DateControl;
 import com.calendarfx.view.Messages;
 import com.calendarfx.model.Interval;
-import com.eia.app.FormularioModel;
-import com.eia.app.FormularioPane;
+import com.caa.app.FormularioModel;
+import com.caa.app.FormularioPane;
 import fr.brouillard.oss.cssfx.CSSFX;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeRegular;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
@@ -146,7 +146,7 @@ public class CalendarApp extends Application {
         Scene scene = new Scene(root);
         CSSFX.start(scene);
 
-        stage.setTitle("EIA");
+        stage.setTitle("CAA");
         aplicarIcono(stage);
         stage.setScene(scene);
         dimensionarYCentrar(stage, null, 1280, 720);
@@ -172,7 +172,7 @@ public class CalendarApp extends Application {
 
     private static void aplicarIcono(Stage stage) {
         stage.getIcons().add(new Image(
-                CalendarApp.class.getResource("/com/eia/app/icon.png").toExternalForm()));
+                CalendarApp.class.getResource("/com/caa/app/icon.png").toExternalForm()));
     }
 
     private static void dimensionarYCentrar(Stage stage, Window owner,
@@ -441,7 +441,7 @@ public class CalendarApp extends Application {
         botonExportar.setAccessibleText("Exportar");
         Object idActual = panel.getEntry().getProperties().get(PROPIEDAD_EXPEDIENTE);
         boolean expedienteGuardado = idActual instanceof String
-                && com.eia.documentos.Data.estaGuardado((String) idActual);
+                && com.caa.documentos.Data.estaGuardado((String) idActual);
         botonExportar.setDisable(!expedienteGuardado);
         botonExportar.setTooltip(new javafx.scene.control.Tooltip(
                 expedienteGuardado ? "Exportar" : "Guardá el expediente primero"));
@@ -475,7 +475,7 @@ public class CalendarApp extends Application {
     private void exportarExpediente(Entry<?> entrada) {
         Object idActual = entrada.getProperties().get(PROPIEDAD_EXPEDIENTE);
         if (!(idActual instanceof String) || ((String) idActual).isBlank()
-                || !com.eia.documentos.Data.estaGuardado((String) idActual)) {
+                || !com.caa.documentos.Data.estaGuardado((String) idActual)) {
             Alert alerta = new Alert(Alert.AlertType.WARNING);
             alerta.setTitle("No se puede exportar");
             alerta.setHeaderText(null);
@@ -489,14 +489,14 @@ public class CalendarApp extends Application {
         Stage ventanaExpediente = ventanasExpediente.get(idExpediente);
         if (ventanaExpediente != null) {
             Object controlador = ventanaExpediente.getProperties().get("tempController");
-            if (controlador instanceof com.eia.documentos.TempController) {
-                ((com.eia.documentos.TempController) controlador).exportar(ventana);
+            if (controlador instanceof com.caa.documentos.TempController) {
+                ((com.caa.documentos.TempController) controlador).exportar(ventana);
                 return;
             }
         }
 
         try {
-            com.eia.documentos.TempController controlador = cargarControladorExpediente(idExpediente);
+            com.caa.documentos.TempController controlador = cargarControladorExpediente(idExpediente);
             controlador.exportar(ventana);
         } catch (IOException ex) {
             Alert alerta = new Alert(Alert.AlertType.ERROR);
@@ -508,12 +508,12 @@ public class CalendarApp extends Application {
         }
     }
 
-    private com.eia.documentos.TempController cargarControladorExpediente(String idExpediente)
+    private com.caa.documentos.TempController cargarControladorExpediente(String idExpediente)
             throws IOException {
         FXMLLoader cargador = new FXMLLoader(
-                CalendarApp.class.getResource("/com/eia/documentos/temp-view.fxml"));
+                CalendarApp.class.getResource("/com/caa/documentos/temp-view.fxml"));
         cargador.load();
-        com.eia.documentos.TempController controlador = cargador.getController();
+        com.caa.documentos.TempController controlador = cargador.getController();
         controlador.cargarExpediente(idExpediente);
         return controlador;
     }
@@ -540,9 +540,9 @@ public class CalendarApp extends Application {
 
         try {
             FXMLLoader cargador = new FXMLLoader(
-                    CalendarApp.class.getResource("/com/eia/documentos/temp-view.fxml"));
+                    CalendarApp.class.getResource("/com/caa/documentos/temp-view.fxml"));
             Parent contenido = cargador.load();
-            com.eia.documentos.TempController controlador = cargador.getController();
+            com.caa.documentos.TempController controlador = cargador.getController();
             controlador.cargarExpediente(idExpediente);
             Stage demo = new Stage();
             demo.initOwner(ventana);

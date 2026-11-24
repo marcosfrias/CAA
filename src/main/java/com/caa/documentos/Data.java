@@ -1,6 +1,6 @@
-package com.eia.documentos;
+package com.caa.documentos;
 
-import com.eia.app.Almacenamiento;
+import com.caa.app.Almacenamiento;
 
 import java.awt.image.BufferedImage;
 import java.io.File;

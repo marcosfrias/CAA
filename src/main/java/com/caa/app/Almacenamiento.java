@@ -1,4 +1,4 @@
-package com.eia.app;
+package com.caa.app;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -43,7 +43,7 @@ public final class Almacenamiento {
     }
 
     private static Path resolverCarpeta() {
-        String rutaConfigurada = System.getProperty("eia.datos");
+        String rutaConfigurada = System.getProperty("caa.datos");
         if (rutaConfigurada != null && !rutaConfigurada.isBlank()) {
             return Path.of(rutaConfigurada).toAbsolutePath().normalize();
         }
@@ -54,12 +54,12 @@ public final class Almacenamiento {
             String localAppData = System.getenv("LOCALAPPDATA");
             Path base = localAppData == null || localAppData.isBlank()
                     ? inicio.resolve("AppData").resolve("Local") : Path.of(localAppData);
-            return base.resolve("EIA").resolve("datos");
+            return base.resolve("CAA").resolve("datos");
         }
         if (sistema.contains("mac")) {
-            return inicio.resolve("Library").resolve("Application Support").resolve("EIA").resolve("datos");
+            return inicio.resolve("Library").resolve("Application Support").resolve("CAA").resolve("datos");
         }
-        return inicio.resolve(".local").resolve("share").resolve("EIA").resolve("datos");
+        return inicio.resolve(".local").resolve("share").resolve("CAA").resolve("datos");
     }
 
     private static void migrarDatosAnteriores() throws IOException {

@@ -1,4 +1,4 @@
-module com.eia.app {
+module com.caa.app {
     requires transitive javafx.graphics;
     requires fr.brouillard.oss.cssfx;
     requires javafx.controls;
@@ -11,6 +11,6 @@ module com.eia.app {
     requires org.kordamp.ikonli.javafx;
     requires org.kordamp.ikonli.fontawesome5;
 
-    exports com.eia.app;
-    opens com.eia.documentos to javafx.fxml;
+    exports com.caa.app;
+    opens com.caa.documentos to javafx.fxml;
 }

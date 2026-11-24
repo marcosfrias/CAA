@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <artifactId>application</artifactId>
     <version>1.0.0</version>
-    <name>EIA</name>
+    <name>CAA</name>
 
     <parent>
         <groupId>com.calendarfx</groupId>
@@ -15,13 +15,13 @@
     <properties>
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.gitcommitid.skip>true</maven.gitcommitid.skip>
-        <app.name>EIA</app.name>
+        <app.name>CAA</app.name>
         <app.version>${project.version}</app.version>
         <app.vendor>marcos frias Software &amp; Consulting</app.vendor>
         <app.description>Gestión de auditorías ambientales y expedientes</app.description>
-        <app.icon>${project.basedir}/src/main/resources/com/eia/app/icon.png</app.icon>
-        <app.windowsIcon>${project.basedir}/src/main/resources/com/eia/app/icon.ico</app.windowsIcon>
-        <app.mainClass>com.eia.app/com.eia.app.CalendarApp</app.mainClass>
+        <app.icon>${project.basedir}/src/main/resources/com/caa/app/icon.png</app.icon>
+        <app.windowsIcon>${project.basedir}/src/main/resources/com/caa/app/icon.ico</app.windowsIcon>
+        <app.mainClass>com.caa.app/com.caa.app.CalendarApp</app.mainClass>
         <calendarfx.version>11.12.7</calendarfx.version>
     </properties>
 
