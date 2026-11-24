@@ -1,0 +1,10 @@
+# Salida de Maven
+target/
+*.class
+
+# Datos locales de la aplicación (expedientes, imágenes, configuración)
+datos/
+
+# Estado del IDE
+.idea/workspace.xml
+*.iml
