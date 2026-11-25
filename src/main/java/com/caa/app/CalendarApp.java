@@ -110,7 +110,6 @@ public class CalendarApp extends Application {
     private String formularioFormsFxId;
     private final Map<String, Stage> ventanasExpediente = new HashMap<>();
     private BotonNotificacion botonNotificaciones;
-    private BotonNotificacion campanaPopover;
     private boolean hayNotificaciones = false;
 
     @Override
@@ -551,9 +550,7 @@ public class CalendarApp extends Application {
         javafx.scene.control.TitledPane detalles = panel.getPanes().get(0);
         if (detalles.getGraphic() instanceof HBox) return; // ya agregada
 
-        BotonNotificacion campana = new BotonNotificacion();
-        campana.marcar(hayNotificaciones);
-        campanaPopover = campana;
+        BotonNotificacion boton = new BotonNotificacion(BotonNotificacion.Uso.AGREGAR);
 
         javafx.scene.control.Label titulo = new javafx.scene.control.Label(detalles.getText());
         titulo.setStyle("-fx-font-weight: bold;");
@@ -561,16 +558,16 @@ public class CalendarApp extends Application {
         javafx.scene.layout.Region espacio = new javafx.scene.layout.Region();
         HBox.setHgrow(espacio, javafx.scene.layout.Priority.ALWAYS);
 
-        HBox fila = new HBox(6, titulo, espacio, campana);
+        HBox fila = new HBox(6, titulo, espacio, boton);
         fila.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         fila.setMaxWidth(Double.MAX_VALUE);
         fila.prefWidthProperty().bind(
                 javafx.beans.binding.Bindings.max(0, detalles.widthProperty().subtract(46)));
-        // Evita que el clic en la campana también abra/cierre la sección "Detalles".
+        // Evita que el clic en el botón también abra/cierre la sección "Detalles".
         fila.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_RELEASED, evento -> {
             Node objetivo = (Node) evento.getTarget();
             while (objetivo != null && objetivo != fila) {
-                if (objetivo == campana) {
+                if (objetivo == boton) {
                     evento.consume();
                     return;
                 }
@@ -591,7 +588,6 @@ public class CalendarApp extends Application {
     private void actualizarNotificaciones(boolean hay) {
         hayNotificaciones = hay;
         if (botonNotificaciones != null) botonNotificaciones.marcar(hay);
-        if (campanaPopover != null) campanaPopover.marcar(hay);
     }
 
     /** Abre la aplicación Demo como ventana interactiva sobre el calendario. */
