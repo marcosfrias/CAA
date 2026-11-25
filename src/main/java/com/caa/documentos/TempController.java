@@ -5,6 +5,7 @@ import com.caa.app.Almacenamiento;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.fxml.FXML;
+import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -15,6 +16,7 @@ import javafx.scene.control.Slider;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ListView;
+import javafx.scene.control.Separator;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeItem;
@@ -56,13 +58,10 @@ import java.awt.image.BufferedImage;
 import java.util.Optional;
 import java.io.File;
 import java.io.IOException;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -70,6 +69,7 @@ public class TempController {
 
     private Data data;
     private String idExpediente;
+    private Runnable accionAbrirFormulario;
     private DisposicionImagenes disposicionImagenes = DisposicionImagenes.PREDETERMINADA;
 
     @FXML
@@ -113,6 +113,141 @@ public class TempController {
 
     public void vincularTituloVentana(Stage stage) {
         stage.titleProperty().bind(tituloVentana.textProperty());
+    }
+
+    public void vincularAbrirFormulario(Runnable accion) {
+        accionAbrirFormulario = accion;
+    }
+
+    public void generarInformeFormulario(Map<String, String> valores) {
+        String nombre = valores.getOrDefault("fileNumber", "").trim();
+        if (data == null || nombre.isEmpty()) return;
+
+        String informe = generarInformeLegal(valores);
+        Elemento existente = menuList.getItems().stream()
+                .filter(elemento -> elemento.getNombre().equalsIgnoreCase(nombre))
+                .findFirst().orElse(null);
+
+        if (existente != null) {
+            existente.textoProperty().set(informe);
+            menuList.getSelectionModel().select(existente);
+        } else {
+            Elemento elemento = new Elemento(nombre);
+            elemento.textoProperty().set(informe);
+            observarCambios(elemento);
+            menuList.getItems().add(elemento);
+            menuList.getSelectionModel().select(elemento);
+        }
+        guardarDatos();
+        refrescarArbolAdjuntos();
+        estado.setText("Informe del expediente actualizado: " + nombre);
+    }
+
+    private static String generarInformeLegal(Map<String, String> v) {
+        StringBuilder sb = new StringBuilder();
+        String empresa = v.getOrDefault("company", "");
+        String expediente = v.getOrDefault("fileNumber", "");
+        String actividad = v.getOrDefault("actividad", "");
+        String email = v.getOrDefault("email", "");
+        String obs = v.getOrDefault("observations", "");
+
+        sb.append("                    INFORME DE AUDITORÍA AMBIENTAL\n\n\n");
+        sb.append("I.   IDENTIFICACIÓN\n\n");
+        sb.append("     Empresa:          ").append(empresa).append("\n");
+        sb.append("     Actividad:        ").append(actividad).append("\n");
+        sb.append("     Expediente N.°:   ").append(expediente).append("\n");
+        if (!email.isBlank())
+            sb.append("     Contacto:         ").append(email).append("\n");
+        sb.append("\n\n");
+
+        sb.append("II.  AUDITORÍAS REALIZADAS\n\n");
+        boolean hayAuditorias = false;
+        for (int i = 1; ; i++) {
+            String fecha = v.get("auditoriaFecha" + i);
+            if (fecha == null || fecha.isBlank()) break;
+            hayAuditorias = true;
+            String consultor = v.getOrDefault("auditoriaConsultor" + i, "");
+            String auditor = v.getOrDefault("auditoriaAuditor" + i, "");
+            sb.append("     ").append(i).append(". Fecha de auditoría:   ").append(fecha).append("\n");
+            if (!consultor.isBlank())
+                sb.append("        Consultor:              ").append(consultor).append("\n");
+            if (!auditor.isBlank())
+                sb.append("        Auditor:                ").append(auditor).append("\n");
+            if (i == 1) {
+                String dias = v.getOrDefault("diasDesdeUltimaAuditoria", "");
+                if (!dias.isBlank())
+                    sb.append("        Días desde la anterior: ").append(dias).append("\n");
+            }
+            sb.append("\n");
+        }
+        if (!hayAuditorias)
+            sb.append("     Sin auditorías registradas.\n\n");
+        sb.append("\n");
+
+        sb.append("III. RESOLUCIONES\n\n");
+        boolean hayResoluciones = false;
+        for (int i = 1; ; i++) {
+            String res = v.get("resolucion" + i);
+            if (res == null || res.isBlank()) break;
+            hayResoluciones = true;
+            String anio = v.getOrDefault("resolucionAnio" + i, "");
+            String cert = v.getOrDefault("certifico" + i, "false");
+            sb.append("     ").append(i).append(". ");
+            if (!anio.isBlank()) sb.append("Año ").append(anio).append(" — ");
+            sb.append(res);
+            sb.append("true".equalsIgnoreCase(cert) ? "  (Certificó)" : "  (No certificó)");
+            sb.append("\n");
+        }
+        if (!hayResoluciones)
+            sb.append("     Sin resoluciones registradas.\n");
+        sb.append("\n\n");
+
+        sb.append("IV. NOTIFICACIONES\n\n");
+        boolean hayNotificaciones = false;
+        for (int i = 1; ; i++) {
+            String notificacion = v.get("notificacion" + i);
+            if (notificacion == null || notificacion.isBlank()) break;
+            hayNotificaciones = true;
+            sb.append("     ").append(i).append(". ").append(notificacion).append("\n");
+        }
+        if (!hayNotificaciones)
+            sb.append("     Sin notificaciones registradas.\n");
+        sb.append("\n\n");
+
+        String notaNumero = v.getOrDefault("notaNumero", "");
+        if (!notaNumero.isBlank()) {
+            sb.append("V.   COMUNICACIÓN OFICIAL\n\n");
+            sb.append("     Nota N.°:         ").append(notaNumero);
+            String notaLetra = v.getOrDefault("notaLetra", "");
+            if (!notaLetra.isBlank()) sb.append("  (").append(notaLetra).append(")");
+            sb.append("\n");
+            String notaFecha = v.getOrDefault("notaFecha", "");
+            if (!notaFecha.isBlank())
+                sb.append("     Fecha:           ").append(notaFecha).append("\n");
+            String tema = v.getOrDefault("notaTema", "");
+            if (!tema.isBlank())
+                sb.append("     Tema:            ").append(tema).append("\n");
+            String tipo = v.getOrDefault("notaTipo", "");
+            if (!tipo.isBlank())
+                sb.append("     Tipo:            ").append(tipo).append("\n");
+            String respuestaFecha = v.getOrDefault("respuestaFecha", "");
+            if (!respuestaFecha.isBlank())
+                sb.append("     Fecha respuesta:  ").append(respuestaFecha).append("\n");
+            String notaRespuesta = v.getOrDefault("notaRespuesta", "");
+            if (!notaRespuesta.isBlank())
+                sb.append("     Respuesta:       ").append(notaRespuesta).append("\n");
+            sb.append("\n\n");
+        }
+
+        if (!obs.isBlank()) {
+            int seccion = notaNumero.isBlank() ? 5 : 6;
+            sb.append(seccion == 5 ? "V." : "VI.").append("   OBSERVACIONES\n\n");
+            for (String linea : obs.split("\\R", -1)) {
+                sb.append("     ").append(linea).append("\n");
+            }
+            sb.append("\n\n");
+        }
+        return sb.toString();
     }
 
     @FXML
@@ -230,13 +365,16 @@ public class TempController {
 
     private void armarRibbon() {
 
-        // --- Grupo Archivo (sin acciones por ahora) ---
         RibbonGroup grupoArchivo = new RibbonGroup();
         grupoArchivo.setTitle("Archivo");
+        Separator separadorExportar = new Separator(Orientation.VERTICAL);
         grupoArchivo.getNodes().addAll(
                 botonGrande("Abrir", "fas-folder-open", "#f5a623", this::onAbrir),
-                botonGrande("Nuevo", "fas-file", "#5aa9e6", this::onNuevoInforme),
-                botonGrande("Guardar", "fas-save", "#2a7de1", this::guardarManual)
+                botonGrande("Formulario", "fas-file-alt", "#5aa9e6", this::abrirFormulario),
+                botonGrande("Guardar", "fas-save", "#2a7de1", this::guardarManual),
+                separadorExportar,
+                botonGrande("Exportar", "fas-file-export", "#2a7de1",
+                        () -> exportar(pestanas.getScene().getWindow()))
         );
 
         // --- Grupo Elementos: botones grandes con ícono ---
@@ -337,6 +475,10 @@ public class TempController {
     // Acciones
     // ------------------------------------------------------------------
 
+    private void abrirFormulario() {
+        accionAbrirFormulario.run();
+    }
+
     private void onAyuda() {
         Alert alerta = new Alert(Alert.AlertType.INFORMATION);
         alerta.setTitle("Ayuda");
@@ -346,7 +488,8 @@ public class TempController {
                         + "Abrí imágenes y después usá Imágen para insertarlas debajo del texto.\n"
                         + "Tabla permite elegir la disposición de las imágenes.\n"
                         + "En Firmas podés subir una imagen, dibujar y ajustar su tamaño al pie.\n"
-                        + "Pulsá Guardar para habilitar la opción Exportar en el evento.\n\n"
+                        + "Usá Formulario para completar los datos del evento; al guardar se agrega o actualiza el informe con el número de expediente.\n"
+                        + "Exportar permite descargar el elemento seleccionado.\n\n"
                         + "Los datos se guardan en:\n" + Almacenamiento.carpetaDatos());
         alerta.initOwner(pestanas.getScene().getWindow());
         alerta.showAndWait();
@@ -857,184 +1000,6 @@ public class TempController {
         DialogoExportacionExpediente.abrir(
                 elegido.getNombre(), contenido.getText(), imagenes, disposicionImagenes,
                 firma, elegido.getAnchoFirmaCm(), duenio);
-    }
-
-    /**
-     * Lee el formulario.tsv del expediente actual y devuelve un mapa clave→valor decodificado.
-     */
-    private Map<String, String> leerFormulario() {
-        Map<String, String> valores = new LinkedHashMap<>();
-        if (idExpediente == null) return valores;
-        Path archivo = Almacenamiento.carpetaDatos().resolve("expedientes")
-                .resolve(idExpediente).resolve("formulario.tsv");
-        if (!Files.exists(archivo)) return valores;
-        try {
-            for (String linea : Files.readAllLines(archivo, StandardCharsets.UTF_8)) {
-                String[] partes = linea.split("\t", -1);
-                if (partes.length == 2) {
-                    String clave = URLDecoder.decode(partes[0], StandardCharsets.UTF_8);
-                    String valor = URLDecoder.decode(partes[1], StandardCharsets.UTF_8);
-                    valores.put(clave, valor);
-                }
-            }
-        } catch (IOException e) { /* ignorar */ }
-        return valores;
-    }
-
-    /**
-     * Genera el texto de un informe legal a partir de los valores del formulario.
-     */
-    private String generarInformeLegal(Map<String, String> v) {
-        StringBuilder sb = new StringBuilder();
-        String empresa    = v.getOrDefault("company", "");
-        String expediente = v.getOrDefault("fileNumber", "");
-        String actividad  = v.getOrDefault("actividad", "");
-        String email      = v.getOrDefault("email", "");
-        String obs        = v.getOrDefault("observations", "");
-
-        // Encabezado formal
-        sb.append("                    INFORME DE AUDITORÍA AMBIENTAL\n\n\n");
-
-        // Identificación del expediente
-        sb.append("I.   IDENTIFICACIÓN\n\n");
-        sb.append("     Empresa:          ").append(empresa).append("\n");
-        sb.append("     Actividad:        ").append(actividad).append("\n");
-        sb.append("     Expediente N.°:   ").append(expediente).append("\n");
-        if (!email.isBlank())
-            sb.append("     Contacto:         ").append(email).append("\n");
-        sb.append("\n\n");
-
-        // Auditorías
-        sb.append("II.  AUDITORÍAS REALIZADAS\n\n");
-        boolean hayAuditorias = false;
-        for (int i = 1; ; i++) {
-            String fecha = v.get("auditoriaFecha" + i);
-            if (fecha == null || fecha.isBlank()) break;
-            hayAuditorias = true;
-            String consultor = v.getOrDefault("auditoriaConsultor" + i, "");
-            String auditor   = v.getOrDefault("auditoriaAuditor" + i, "");
-            sb.append("     ").append(i).append(". Fecha de auditoría:   ").append(fecha).append("\n");
-            if (!consultor.isBlank())
-                sb.append("        Consultor:              ").append(consultor).append("\n");
-            if (!auditor.isBlank())
-                sb.append("        Auditor:                ").append(auditor).append("\n");
-            if (i == 1) {
-                String dias = v.getOrDefault("diasDesdeUltimaAuditoria", "");
-                if (!dias.isBlank())
-                    sb.append("        Días desde la anterior: ").append(dias).append("\n");
-            }
-            sb.append("\n");
-        }
-        if (!hayAuditorias)
-            sb.append("     Sin auditorías registradas.\n\n");
-
-        sb.append("\n");
-
-        // Resoluciones
-        sb.append("III. RESOLUCIONES\n\n");
-        boolean hayResoluciones = false;
-        for (int i = 1; ; i++) {
-            String res = v.get("resolucion" + i);
-            if (res == null || res.isBlank()) break;
-            hayResoluciones = true;
-            String anio = v.getOrDefault("resolucionAnio" + i, "");
-            String cert = v.getOrDefault("certifico" + i, "false");
-            sb.append("     ").append(i).append(". ");
-            if (!anio.isBlank()) sb.append("Año ").append(anio).append(" — ");
-            sb.append(res);
-            if ("true".equalsIgnoreCase(cert)) sb.append("  (Certificó)");
-            sb.append("\n");
-        }
-        if (!hayResoluciones)
-            sb.append("     Sin resoluciones registradas.\n");
-        sb.append("\n\n");
-
-        // Notificaciones
-        sb.append("IV.  NOTIFICACIONES\n\n");
-        boolean hayNotif = false;
-        for (int i = 1; ; i++) {
-            String notif = v.get("notificacion" + i);
-            if (notif == null || notif.isBlank()) break;
-            hayNotif = true;
-            sb.append("     ").append(i).append(". ").append(notif).append("\n");
-        }
-        if (!hayNotif)
-            sb.append("     Sin notificaciones registradas.\n");
-        sb.append("\n\n");
-
-        // Comunicación / Nota
-        String notaNum = v.getOrDefault("notaNumero", "");
-        if (!notaNum.isBlank()) {
-            sb.append("V.   COMUNICACIÓN OFICIAL\n\n");
-            sb.append("     Nota N.°:         ").append(notaNum);
-            String notaLetra = v.getOrDefault("notaLetra", "");
-            if (!notaLetra.isBlank()) sb.append("  (").append(notaLetra).append(")");
-            sb.append("\n");
-            String notaFecha = v.getOrDefault("notaFecha", "");
-            if (!notaFecha.isBlank())
-                sb.append("     Fecha:            ").append(notaFecha).append("\n");
-            String tema = v.getOrDefault("notaTema", "");
-            if (!tema.isBlank())
-                sb.append("     Tema:             ").append(tema).append("\n");
-            String tipo = v.getOrDefault("notaTipo", "");
-            if (!tipo.isBlank())
-                sb.append("     Tipo:             ").append(tipo).append("\n");
-            String respFecha = v.getOrDefault("respuestaFecha", "");
-            if (!respFecha.isBlank())
-                sb.append("     Fecha respuesta:  ").append(respFecha).append("\n");
-            String notaRespuesta = v.getOrDefault("notaRespuesta", "");
-            if (!notaRespuesta.isBlank())
-                sb.append("     Respuesta:        ").append(notaRespuesta).append("\n");
-            sb.append("\n\n");
-        }
-
-        // Observaciones
-        if (!obs.isBlank()) {
-            int seccion = notaNum.isBlank() ? 5 : 6;
-            sb.append(seccion == 5 ? "V." : "VI.").append("   OBSERVACIONES\n\n");
-            // Sangría en cada línea de observaciones
-            for (String linea : obs.split("\\R", -1)) {
-                sb.append("     ").append(linea).append("\n");
-            }
-            sb.append("\n\n");
-        }
-
-        return sb.toString();
-    }
-
-    /**
-     * Crea o actualiza un elemento "Informe Legal" con el contenido generado desde el formulario.
-     */
-    private void onNuevoInforme() {
-        if (idExpediente == null || data == null) {
-            showWarning("No hay un expediente cargado.");
-            return;
-        }
-        Map<String, String> valores = leerFormulario();
-        if (valores.isEmpty()) {
-            showWarning("No se encontraron datos del formulario para este expediente.\nCompletá el Formulario primero.");
-            return;
-        }
-        String informe = generarInformeLegal(valores);
-        String nombreElemento = "Informe Legal";
-
-        Elemento existente = menuList.getItems().stream()
-                .filter(e -> nombreElemento.equalsIgnoreCase(e.getNombre()))
-                .findFirst().orElse(null);
-
-        if (existente != null) {
-            existente.textoProperty().set(informe);
-            menuList.getSelectionModel().select(existente);
-        } else {
-            Elemento elemento = new Elemento(nombreElemento);
-            elemento.textoProperty().set(informe);
-            observarCambios(elemento);
-            menuList.getItems().add(elemento);
-            menuList.getSelectionModel().select(elemento);
-        }
-        guardarDatos();
-        refrescarArbolAdjuntos();
-        estado.setText("Informe legal generado desde el formulario.");
     }
 
     /**

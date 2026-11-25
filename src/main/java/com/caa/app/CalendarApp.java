@@ -31,9 +31,6 @@ import com.calendarfx.model.Interval;
 import com.caa.app.FormularioModel;
 import com.caa.app.FormularioPane;
 import fr.brouillard.oss.cssfx.CSSFX;
-import org.kordamp.ikonli.fontawesome5.FontAwesomeRegular;
-import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
-import org.kordamp.ikonli.javafx.FontIcon;
 import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
@@ -98,7 +95,7 @@ public class CalendarApp extends Application {
     private static final Path ARCHIVO_EVENTOS = CARPETA.resolve("eventos.txt");
 
     private final CalendarSource industrias = new CalendarSource("Industrias");
-    private final CalendarSource actividades = new CalendarSource("Actividades");
+    private final CalendarSource actividades = new CalendarSource("Actividad");
     private final List<CalendarSource> grupos = List.of(industrias, actividades);
     private final Map<Calendar, Style> estilos = new HashMap<>();
     private final Set<Entry<?>> entradas = new LinkedHashSet<>();
@@ -112,6 +109,9 @@ public class CalendarApp extends Application {
     private Stage ventanaFormsFx;
     private String formularioFormsFxId;
     private final Map<String, Stage> ventanasExpediente = new HashMap<>();
+    private BotonNotificacion botonNotificaciones;
+    private BotonNotificacion campanaPopover;
+    private boolean hayNotificaciones = false;
 
     @Override
     public void start(Stage stage) {
@@ -172,7 +172,8 @@ public class CalendarApp extends Application {
             Platform.runLater(() -> configurarColoresAnuales(calendarView));
         }
 
-        Button[] botones = {crearBotonAgregar(), crearBotonEliminar()};
+        botonNotificaciones = new BotonNotificacion();
+        Button[] botones = {crearBotonAgregar(), crearBotonEliminar(), botonNotificaciones};
         calendarView.selectedPageProperty().addListener((obs, anterior, actual) ->
                 Platform.runLater(() -> insertarBotonesEnBarra(root, botones)));
         ubicarBotones(root, botones);
@@ -248,24 +249,27 @@ public class CalendarApp extends Application {
     private Button crearBotonAgregar() {
         Button boton = new Button("+");
         boton.setOnAction(e -> {
-            List<String> nombresGrupos = List.of("Industrias", "Actividades");
+            List<String> nombresGrupos = List.of("Industria", "Actividad");
             ChoiceDialog<String> elegirGrupo = new ChoiceDialog<>(nombresGrupos.get(0), nombresGrupos);
-            elegirGrupo.setTitle("Nueva categoría");
-            elegirGrupo.setHeaderText("¿En qué grupo querés agregarla?");
-            elegirGrupo.setContentText("Grupo:");
+            elegirGrupo.setTitle("Agregar");
+            elegirGrupo.setHeaderText("¿Querés agregar una industria o una actividad?");
+            elegirGrupo.setContentText("Tipo:");
             elegirGrupo.initOwner(ventana);
             elegirGrupo.showAndWait().ifPresent(nombreGrupo -> {
+                boolean esActividad = "Actividad".equals(nombreGrupo);
+                String tipo = esActividad ? "actividad" : "industria";
+
                 TextInputDialog dialog = new TextInputDialog();
-                dialog.setTitle("Nueva categoría");
+                dialog.setTitle("Nueva " + tipo);
                 dialog.setHeaderText(null);
-                dialog.setContentText("Nombre de la categoría:");
+                dialog.setContentText("Nombre de la " + tipo + ":");
                 dialog.initOwner(ventana);
 
                 dialog.showAndWait()
                         .map(String::trim)
                         .filter(s -> !s.isEmpty())
                         .ifPresent(nombre -> {
-                            CalendarSource grupo = "Actividades".equals(nombreGrupo) ? actividades : industrias;
+                            CalendarSource grupo = esActividad ? actividades : industrias;
                             agregarCalendario(grupo, nombre);
                             guardarGrupo(grupo);
                         });
@@ -286,9 +290,9 @@ public class CalendarApp extends Application {
             if (nombres.isEmpty()) return;
 
             ChoiceDialog<String> elegir = new ChoiceDialog<>(nombres.get(0), nombres);
-            elegir.setTitle("Eliminar categoría");
+            elegir.setTitle("Eliminar industria o actividad");
             elegir.setHeaderText(null);
-            elegir.setContentText("Categoría:");
+            elegir.setContentText("Industria o actividad:");
             elegir.initOwner(ventana);
 
             elegir.showAndWait().ifPresent(nombre -> {
@@ -305,7 +309,8 @@ public class CalendarApp extends Application {
         return boton;
     }
 
-    private void abrirFormsFxDemo(Entry<?> entrada) {
+    private void abrirFormsFxDemo(Entry<?> entrada, Window owner,
+                                  com.caa.documentos.TempController controladorExpediente) {
         Object idActual = entrada.getProperties().get(PROPIEDAD_EXPEDIENTE);
         String idFormulario;
         if (idActual instanceof String && !((String) idActual).isBlank()) {
@@ -332,14 +337,16 @@ public class CalendarApp extends Application {
         FormularioPane formulario = new FormularioPane(modelo, valores -> {
             guardarFormulario(idFormulario, valores);
             actualizarActividadEvento(entrada, valores.get("actividad"));
+            controladorExpediente.generarInformeFormulario(valores);
         });
 
         Stage demo = new Stage();
-        demo.initOwner(ventana);
+        demo.initOwner(owner);
         aplicarIcono(demo);
         demo.setTitle("Formulario de auditoría");
         demo.setScene(new Scene(formulario));
-        dimensionarYCentrar(demo, ventana, 1120, 660);
+        demo.setAlwaysOnTop(true);
+        dimensionarYCentrar(demo, owner, 1120, 660);
         demo.setOnHidden(evento -> {
             if (idFormulario.equals(formularioFormsFxId)) {
                 ventanaFormsFx = null;
@@ -350,6 +357,8 @@ public class CalendarApp extends Application {
         ventanaFormsFx = demo;
         formularioFormsFxId = idFormulario;
         demo.show();
+        demo.toFront();
+        demo.requestFocus();
 
     }
 
@@ -414,6 +423,7 @@ public class CalendarApp extends Application {
                     com.calendarfx.view.popover.EntryPopOverContentPane panel =
                             (com.calendarfx.view.popover.EntryPopOverContentPane) contenido;
                     agregarBotonesJuntoARepetir(panel);
+                    agregarCampanaEnDetalles(panel);
                 }
             });
             return contenido;
@@ -495,7 +505,7 @@ public class CalendarApp extends Application {
         alerta.showAndWait();
     }
 
-    /** Coloca los accesos al formulario y al expediente junto a la opción Repetir. */
+    /** Coloca el acceso al expediente junto a la opción Repetir. */
     private void agregarBotonesJuntoARepetir(
             com.calendarfx.view.popover.EntryPopOverContentPane panel) {
         Button botonExpediente = new Button("+");
@@ -505,32 +515,7 @@ public class CalendarApp extends Application {
                 + " -fx-font-size: 16px; -fx-padding: 0 7 0 7;");
         botonExpediente.setOnAction(evento -> abrirDemo(panel.getEntry()));
 
-        Button botonFormulario = new Button();
-        FontIcon iconoDocumento = new FontIcon(FontAwesomeSolid.FILE_ALT);
-        iconoDocumento.setIconSize(13);
-        iconoDocumento.setIconColor(javafx.scene.paint.Color.web("#4a5568"));
-        botonFormulario.setGraphic(iconoDocumento);
-        botonFormulario.setStyle("-fx-font-size: 16px; -fx-padding: 0 7 0 7;");
-        botonFormulario.setAccessibleText("Formulario");
-        botonFormulario.setTooltip(new javafx.scene.control.Tooltip("Formulario"));
-        botonFormulario.setOnAction(evento -> abrirFormsFxDemo(panel.getEntry()));
-
-        Button botonExportar = new Button();
-        FontIcon iconoExportar = new FontIcon(FontAwesomeSolid.FILE_EXPORT);
-        iconoExportar.setIconSize(13);
-        iconoExportar.setIconColor(javafx.scene.paint.Color.web("#2a7de1"));
-        botonExportar.setGraphic(iconoExportar);
-        botonExportar.setStyle("-fx-font-size: 16px; -fx-padding: 0 7 0 7;");
-        botonExportar.setAccessibleText("Exportar");
-        Object idActual = panel.getEntry().getProperties().get(PROPIEDAD_EXPEDIENTE);
-        boolean expedienteGuardado = idActual instanceof String
-                && com.caa.documentos.Data.estaGuardado((String) idActual);
-        botonExportar.setDisable(!expedienteGuardado);
-        botonExportar.setTooltip(new javafx.scene.control.Tooltip(
-                expedienteGuardado ? "Exportar" : "Guardá el expediente primero"));
-        botonExportar.setOnAction(evento -> exportarExpediente(panel.getEntry()));
-
-        HBox botones = new HBox(4, botonFormulario, botonExpediente, botonExportar);
+        HBox botones = new HBox(botonExpediente);
         botones.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
         for (javafx.scene.control.TitledPane seccion : panel.getPanes()) {
@@ -555,46 +540,58 @@ public class CalendarApp extends Application {
         }
     }
 
-    private void exportarExpediente(Entry<?> entrada) {
-        Object idActual = entrada.getProperties().get(PROPIEDAD_EXPEDIENTE);
-        if (!(idActual instanceof String) || ((String) idActual).isBlank()
-                || !com.caa.documentos.Data.estaGuardado((String) idActual)) {
-            mostrarAlerta(Alert.AlertType.WARNING, "No se puede exportar",
-                    "Abrí el expediente y pulsá Guardar antes de exportar.");
-            return;
-        }
-        String idExpediente = (String) idActual;
+    /**
+     * Coloca la campana de notificaciones al final del renglón "Detalles".
+     * Ese renglón es un TitledPane; para alinear la campana a la derecha se
+     * reemplaza su título por un HBox que ocupa todo el ancho disponible.
+     */
+    private void agregarCampanaEnDetalles(
+            com.calendarfx.view.popover.EntryPopOverContentPane panel) {
+        if (panel.getPanes().isEmpty()) return;
+        javafx.scene.control.TitledPane detalles = panel.getPanes().get(0);
+        if (detalles.getGraphic() instanceof HBox) return; // ya agregada
 
-        Stage ventanaExpediente = ventanasExpediente.get(idExpediente);
-        if (ventanaExpediente != null) {
-            Object controlador = ventanaExpediente.getProperties().get("tempController");
-            if (controlador instanceof com.caa.documentos.TempController) {
-                ((com.caa.documentos.TempController) controlador).exportar(ventana);
-                return;
+        BotonNotificacion campana = new BotonNotificacion();
+        campana.marcar(hayNotificaciones);
+        campanaPopover = campana;
+
+        javafx.scene.control.Label titulo = new javafx.scene.control.Label(detalles.getText());
+        titulo.setStyle("-fx-font-weight: bold;");
+
+        javafx.scene.layout.Region espacio = new javafx.scene.layout.Region();
+        HBox.setHgrow(espacio, javafx.scene.layout.Priority.ALWAYS);
+
+        HBox fila = new HBox(6, titulo, espacio, campana);
+        fila.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        fila.setMaxWidth(Double.MAX_VALUE);
+        fila.prefWidthProperty().bind(
+                javafx.beans.binding.Bindings.max(0, detalles.widthProperty().subtract(46)));
+        // Evita que el clic en la campana también abra/cierre la sección "Detalles".
+        fila.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_RELEASED, evento -> {
+            Node objetivo = (Node) evento.getTarget();
+            while (objetivo != null && objetivo != fila) {
+                if (objetivo == campana) {
+                    evento.consume();
+                    return;
+                }
+                objetivo = objetivo.getParent();
             }
-        }
+        });
 
-        try {
-            com.caa.documentos.TempController controlador = cargarControladorExpediente(idExpediente);
-            controlador.exportar(ventana);
-        } catch (IOException ex) {
-            Alert alerta = new Alert(Alert.AlertType.ERROR);
-            alerta.setTitle("No se pudo exportar");
-            alerta.setHeaderText(null);
-            alerta.setContentText("No se pudo cargar el expediente: " + ex.getMessage());
-            alerta.initOwner(ventana);
-            alerta.showAndWait();
-        }
+        detalles.setText("");
+        detalles.setGraphic(fila);
+        detalles.setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY);
+        // PopOverTitledPane cambia a TEXT_ONLY al expandir; lo forzamos de nuevo
+        // para que el título con la campana siga visible.
+        detalles.expandedProperty().addListener((obs, anterior, expandido) ->
+                detalles.setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY));
     }
 
-    private com.caa.documentos.TempController cargarControladorExpediente(String idExpediente)
-            throws IOException {
-        FXMLLoader cargador = new FXMLLoader(
-                CalendarApp.class.getResource("/com/caa/documentos/temp-view.fxml"));
-        cargador.load();
-        com.caa.documentos.TempController controlador = cargador.getController();
-        controlador.cargarExpediente(idExpediente);
-        return controlador;
+    /** Punto único para actualizar el estado de la campana cuando definas la lógica. */
+    private void actualizarNotificaciones(boolean hay) {
+        hayNotificaciones = hay;
+        if (botonNotificaciones != null) botonNotificaciones.marcar(hay);
+        if (campanaPopover != null) campanaPopover.marcar(hay);
     }
 
     /** Abre la aplicación Demo como ventana interactiva sobre el calendario. */
@@ -629,7 +626,7 @@ public class CalendarApp extends Application {
             demo.initModality(Modality.NONE);
             demo.setAlwaysOnTop(true);
             controlador.vincularTituloVentana(demo);
-            demo.getProperties().put("tempController", controlador);
+            controlador.vincularAbrirFormulario(() -> abrirFormsFxDemo(entrada, demo, controlador));
             demo.setScene(new Scene(contenido));
             dimensionarYCentrar(demo, ventana, 920, 520);
             demo.setOnHidden(evento -> {

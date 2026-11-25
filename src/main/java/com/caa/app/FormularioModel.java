@@ -175,7 +175,7 @@ public final class FormularioModel {
                 Section.of(
                         campoActividad,
                         campo("company", "Empresa").required("Obligatorio"),
-                        campo("fileNumber", "Nº de expediente"),
+                        campo("fileNumber", "Nº de expediente").required("Obligatorio"),
                         campo("email", "Correo electrónico")
                 ).title("Identificación"),
                 Section.of(registros.toArray(new Element[0]))
