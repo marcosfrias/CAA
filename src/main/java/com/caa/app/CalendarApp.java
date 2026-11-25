@@ -421,8 +421,8 @@ public class CalendarApp extends Application {
                 if (contenido instanceof com.calendarfx.view.popover.EntryPopOverContentPane) {
                     com.calendarfx.view.popover.EntryPopOverContentPane panel =
                             (com.calendarfx.view.popover.EntryPopOverContentPane) contenido;
-                    agregarBotonesJuntoARepetir(panel);
-                    agregarCampanaEnDetalles(panel);
+                    agregarBotonExpedienteEnDetalles(panel);
+                    reemplazarUbicacionPorNotificacion(panel);
                 }
             });
             return contenido;
@@ -504,9 +504,17 @@ public class CalendarApp extends Application {
         alerta.showAndWait();
     }
 
-    /** Coloca el acceso al expediente junto a la opción Repetir. */
-    private void agregarBotonesJuntoARepetir(
+    /**
+     * Coloca el botón "+" (expediente) al final del renglón "Detalles".
+     * Ese renglón es un TitledPane; para alinear el botón a la derecha se
+     * reemplaza su título por un HBox que ocupa todo el ancho disponible.
+     */
+    private void agregarBotonExpedienteEnDetalles(
             com.calendarfx.view.popover.EntryPopOverContentPane panel) {
+        if (panel.getPanes().isEmpty()) return;
+        javafx.scene.control.TitledPane detalles = panel.getPanes().get(0);
+        if (detalles.getGraphic() instanceof HBox) return; // ya agregado
+
         Button botonExpediente = new Button("+");
         botonExpediente.setAccessibleText("Expediente");
         botonExpediente.setTooltip(new javafx.scene.control.Tooltip("Expediente"));
@@ -514,51 +522,13 @@ public class CalendarApp extends Application {
                 + " -fx-font-size: 16px; -fx-padding: 0 7 0 7;");
         botonExpediente.setOnAction(evento -> abrirDemo(panel.getEntry()));
 
-        HBox botones = new HBox(botonExpediente);
-        botones.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-
-        for (javafx.scene.control.TitledPane seccion : panel.getPanes()) {
-            GridPane grilla = buscarGrillaDetalles(seccion.getContent());
-            if (grilla == null) continue;
-            for (Node nodo : new ArrayList<>(grilla.getChildren())) {
-                Integer fila = GridPane.getRowIndex(nodo);
-                Integer columna = GridPane.getColumnIndex(nodo);
-                if (nodo instanceof javafx.scene.control.MenuButton
-                        && Integer.valueOf(4).equals(fila)
-                        && Integer.valueOf(1).equals(columna)) {
-                    javafx.scene.layout.Region espacio = new javafx.scene.layout.Region();
-                    HBox.setHgrow(espacio, javafx.scene.layout.Priority.ALWAYS);
-                    HBox filaRepetir = new HBox(14, nodo, espacio, botones);
-                    filaRepetir.setMaxWidth(Double.MAX_VALUE);
-                    filaRepetir.setStyle("-fx-alignment: center-left;");
-                    grilla.getChildren().remove(nodo);
-                    grilla.add(filaRepetir, 1, 4);
-                    return;
-                }
-            }
-        }
-    }
-
-    /**
-     * Coloca la campana de notificaciones al final del renglón "Detalles".
-     * Ese renglón es un TitledPane; para alinear la campana a la derecha se
-     * reemplaza su título por un HBox que ocupa todo el ancho disponible.
-     */
-    private void agregarCampanaEnDetalles(
-            com.calendarfx.view.popover.EntryPopOverContentPane panel) {
-        if (panel.getPanes().isEmpty()) return;
-        javafx.scene.control.TitledPane detalles = panel.getPanes().get(0);
-        if (detalles.getGraphic() instanceof HBox) return; // ya agregada
-
-        BotonNotificacion boton = new BotonNotificacion(BotonNotificacion.Uso.AGREGAR);
-
         javafx.scene.control.Label titulo = new javafx.scene.control.Label(detalles.getText());
         titulo.setStyle("-fx-font-weight: bold;");
 
         javafx.scene.layout.Region espacio = new javafx.scene.layout.Region();
         HBox.setHgrow(espacio, javafx.scene.layout.Priority.ALWAYS);
 
-        HBox fila = new HBox(6, titulo, espacio, boton);
+        HBox fila = new HBox(6, titulo, espacio, botonExpediente);
         fila.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         fila.setMaxWidth(Double.MAX_VALUE);
         fila.prefWidthProperty().bind(
@@ -567,7 +537,7 @@ public class CalendarApp extends Application {
         fila.addEventHandler(javafx.scene.input.MouseEvent.MOUSE_RELEASED, evento -> {
             Node objetivo = (Node) evento.getTarget();
             while (objetivo != null && objetivo != fila) {
-                if (objetivo == boton) {
+                if (objetivo == botonExpediente) {
                     evento.consume();
                     return;
                 }
@@ -579,9 +549,48 @@ public class CalendarApp extends Application {
         detalles.setGraphic(fila);
         detalles.setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY);
         // PopOverTitledPane cambia a TEXT_ONLY al expandir; lo forzamos de nuevo
-        // para que el título con la campana siga visible.
+        // para que el título con el botón siga visible.
         detalles.expandedProperty().addListener((obs, anterior, expandido) ->
                 detalles.setContentDisplay(javafx.scene.control.ContentDisplay.GRAPHIC_ONLY));
+    }
+
+    /**
+     * Reemplaza el campo "Agregar Ubicación" de la cabecera del evento por un
+     * botón "Agregar notificación".
+     */
+    private void reemplazarUbicacionPorNotificacion(
+            com.calendarfx.view.popover.EntryPopOverContentPane panel) {
+        Node cabecera = panel.getHeader();
+        if (!(cabecera instanceof GridPane)) return;
+
+        GridPane grilla = (GridPane) cabecera;
+        for (Node nodo : new ArrayList<>(grilla.getChildren())) {
+            if (!(nodo instanceof javafx.scene.control.TextField)) continue;
+            if (!nodo.getStyleClass().contains("location")) continue;
+
+            Integer columna = GridPane.getColumnIndex(nodo);
+            Integer fila = GridPane.getRowIndex(nodo);
+            grilla.getChildren().remove(nodo);
+
+            org.kordamp.ikonli.javafx.FontIcon icono =
+                    new org.kordamp.ikonli.javafx.FontIcon(
+                            org.kordamp.ikonli.fontawesome5.FontAwesomeSolid.CALENDAR_PLUS);
+            icono.setIconSize(12);
+            icono.setIconColor(javafx.scene.paint.Color.web("#2a7de1"));
+
+            Button agregarNotificacion = new Button("Agregar notificación");
+            agregarNotificacion.setGraphic(icono);
+            agregarNotificacion.setStyle("-fx-background-color: transparent;"
+                    + " -fx-text-fill: #2a7de1; -fx-padding: 2 0 2 0;"
+                    + " -fx-cursor: hand; -fx-font-size: 12px;");
+            agregarNotificacion.setMaxWidth(Double.MAX_VALUE);
+            agregarNotificacion.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+            agregarNotificacion.setTooltip(
+                    new javafx.scene.control.Tooltip("Agregar notificación al evento"));
+            grilla.add(agregarNotificacion,
+                    columna == null ? 0 : columna, fila == null ? 1 : fila);
+            return;
+        }
     }
 
     /** Punto único para actualizar el estado de la campana cuando definas la lógica. */
