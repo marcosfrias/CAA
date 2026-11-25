@@ -73,6 +73,7 @@ public final class Datos {
     private Timeline colocador;
     private HBox barraFiltros;
     private ListView<?> listaResultados;
+    private Node accesorioFinal;
 
     public Datos(CalendarView vista, List<CalendarSource> grupos, CalendarSource actividades, Set<Entry<?>> entradas) {
         this.vista = vista;
@@ -144,10 +145,22 @@ public final class Datos {
         }
     }
 
+    /** Nodo opcional que se mantiene siempre al final de la barra de filtros. */
+    public void setAccesorioFinal(Node nodo) {
+        accesorioFinal = nodo;
+        actualizarControlesFiltro();
+    }
+
     private void actualizarControlesFiltro() {
         if (barraFiltros == null) return;
-        if (CATEGORIA.equals(filtro.getValue())) barraFiltros.getChildren().setAll(filtro, selectorCategoria);
-        else barraFiltros.getChildren().setAll(filtro, campo);
+        List<Node> controles = new ArrayList<>();
+        if (CATEGORIA.equals(filtro.getValue())) {
+            controles.addAll(List.of(filtro, selectorCategoria));
+        } else {
+            controles.addAll(List.of(filtro, campo));
+        }
+        if (accesorioFinal != null) controles.add(accesorioFinal);
+        barraFiltros.getChildren().setAll(controles);
     }
 
     private void buscar(String texto) {

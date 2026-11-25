@@ -159,7 +159,9 @@ public class CalendarApp extends Application {
         dimensionarYCentrar(stage, null, 1280, 720);
         stage.show();
 
+        botonNotificaciones = new BotonNotificacion();
         datos = new Datos(calendarView, grupos, actividades, entradas);
+        datos.setAccesorioFinal(botonNotificaciones);
         datos.instalar(root);
 
         calendarView.selectedPageProperty().addListener((obs, anterior, pagina) -> {
@@ -171,8 +173,7 @@ public class CalendarApp extends Application {
             Platform.runLater(() -> configurarColoresAnuales(calendarView));
         }
 
-        botonNotificaciones = new BotonNotificacion();
-        Button[] botones = {crearBotonAgregar(), crearBotonEliminar(), botonNotificaciones};
+        Button[] botones = {crearBotonAgregar(), crearBotonEliminar()};
         calendarView.selectedPageProperty().addListener((obs, anterior, actual) ->
                 Platform.runLater(() -> insertarBotonesEnBarra(root, botones)));
         ubicarBotones(root, botones);
