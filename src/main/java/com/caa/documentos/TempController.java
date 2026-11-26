@@ -7,6 +7,7 @@ import javafx.beans.property.StringProperty;
 import javafx.fxml.FXML;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
+import javafx.geometry.Side;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Alert;
@@ -55,6 +56,8 @@ import org.kordamp.ikonli.javafx.FontIcon;
 
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.util.Optional;
 import java.io.File;
 import java.io.IOException;
@@ -64,6 +67,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import javax.imageio.ImageIO;
 
 public class TempController {
 
@@ -71,6 +75,7 @@ public class TempController {
     private String idExpediente;
     private Runnable accionAbrirFormulario;
     private DisposicionImagenes disposicionImagenes = DisposicionImagenes.PREDETERMINADA;
+    private File excelParaTabla;
 
     @FXML
     private ListView<Elemento> menuList;
@@ -87,6 +92,9 @@ public class TempController {
 
     @FXML
     private FlowPane imagenesInsertadas;
+
+    @FXML
+    private VBox tablasInsertadas;
 
     @FXML
     private VBox zonaFirma;
@@ -273,6 +281,7 @@ public class TempController {
                 .addListener((obs, anterior, elegido) -> {
                     vincularTexto(elegido);
                     if (imagenesInsertadas != null) mostrarImagenes(elegido);
+                    if (tablasInsertadas != null) mostrarTablas(elegido);
                     mostrarFirma(elegido);
                 });
 
@@ -305,9 +314,10 @@ public class TempController {
                     Path path = Path.of(ruta);
                     String nombre = path.getFileName().toString();
                     boolean carpeta = data != null && Files.isDirectory(data.resolverArchivo(ruta));
-                    String codigo = carpeta ? "fas-folder" : "fas-file-image";
+                    boolean libro = !carpeta && esLibroExcel(path.toFile());
+                    String codigo = carpeta ? "fas-folder" : libro ? "fas-file-excel" : "fas-file-image";
                     setText(nombre);
-                    setGraphic(icono(codigo, 14, carpeta ? "#e7a12c" : "#6b7785"));
+                    setGraphic(icono(codigo, 14, carpeta ? "#e7a12c" : libro ? "#2e8b57" : "#6b7785"));
                     setTooltip(new javafx.scene.control.Tooltip(ruta));
                 }
                 setContextMenu(crearMenuContextual(valor));
@@ -322,14 +332,18 @@ public class TempController {
 
     public void cargarExpediente(String idExpediente) {
         this.idExpediente = idExpediente;
+        excelParaTabla = null;
         data = new Data(idExpediente);
         menuList.getItems().clear();
         contenido.clear();
         contenido.setDisable(true);
+        boolean datosMigrados = false;
         for (Data.Item item : data.cargarElementos()) {
             Elemento elemento = new Elemento(item.getNombre());
             elemento.textoProperty().set(item.getTexto());
             elemento.getImagenes().addAll(item.getImagenes());
+            elemento.getTablas().addAll(item.getTablas());
+            datosMigrados |= migrarTablasAntiguas(elemento);
             elemento.setFirma(item.getFirma());
             elemento.setAnchoFirmaCm(item.getAnchoFirmaCm());
             observarCambios(elemento);
@@ -339,6 +353,7 @@ public class TempController {
             menuList.getSelectionModel().selectFirst();
         }
         refrescarArbolAdjuntos();
+        if (datosMigrados) guardarDatos();
         estado.setText("Expediente del evento cargado");
     }
 
@@ -370,7 +385,7 @@ public class TempController {
         Separator separadorExportar = new Separator(Orientation.VERTICAL);
         grupoArchivo.getNodes().addAll(
                 botonGrande("Abrir", "fas-folder-open", "#f5a623", this::onAbrir),
-                botonGrande("Formulario", "fas-file-alt", "#5aa9e6", this::abrirFormulario),
+                botonGrande("Expediente", "fas-file-alt", "#5aa9e6", this::abrirFormulario),
                 botonGrande("Guardar", "fas-save", "#2a7de1", this::guardarManual),
                 separadorExportar,
                 botonGrande("Exportar", "fas-file-export", "#2a7de1",
@@ -423,14 +438,25 @@ public class TempController {
         // --- Grupo Imágenes ---
         RibbonGroup grupoImagenes = new RibbonGroup();
         grupoImagenes.setTitle("Imágen");
-        grupoImagenes.getNodes().add(
-                botonGrande("Imágen", "fas-image", "#2a7de1", this::onImagenes));
+        Button botonImagen = botonGrande("Imágen", "fas-image", "#2a7de1", this::onImagenes);
+        Button botonFlechaImagen = new Button(null, icono("fas-chevron-down", 10, "#2a7de1"));
+        botonFlechaImagen.setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+        botonFlechaImagen.setFocusTraversable(false);
+        botonFlechaImagen.setTooltip(new javafx.scene.control.Tooltip("Opciones de imagen"));
+        MenuItem disposicion = new MenuItem("Disposición de imágenes...");
+        disposicion.setOnAction(evento ->
+                DialogoDisposicionImagenes.abrir(pestanas.getScene().getWindow(), disposicionImagenes,
+                        opciones -> disposicionImagenes = opciones));
+        ContextMenu menuImagen = new ContextMenu(disposicion);
+        botonFlechaImagen.setOnAction(evento ->
+                menuImagen.show(botonFlechaImagen, Side.BOTTOM, 0, 0));
+        HBox botonesImagen = new HBox(0, botonImagen, botonFlechaImagen);
+        botonesImagen.setAlignment(Pos.CENTER);
+        grupoImagenes.getNodes().add(botonesImagen);
 
         RibbonGroup grupoTabla = new RibbonGroup();
         grupoTabla.setTitle("Tabla");
-        grupoTabla.getNodes().add(botonGrande("Tabla", "fas-table", "#2a7de1", () ->
-                DialogoDisposicionImagenes.abrir(pestanas.getScene().getWindow(), disposicionImagenes,
-                        opciones -> disposicionImagenes = opciones)));
+        grupoTabla.getNodes().add(botonGrande("Tabla", "fas-table", "#2a7de1", this::onTabla));
 
         // --- Grupo Ayuda ---
         RibbonGroup grupoAyuda = new RibbonGroup();
@@ -486,7 +512,8 @@ public class TempController {
         alerta.setContentText(
                 "Seleccioná un expediente de la lista para editar su texto.\n"
                         + "Abrí imágenes y después usá Imágen para insertarlas debajo del texto.\n"
-                        + "Tabla permite elegir la disposición de las imágenes.\n"
+                        + "Abrí un libro de Excel y usá Tabla para insertarlo en el punto del texto donde está el cursor.\n"
+                        + "La flecha junto a Imágen permite elegir su disposición.\n"
                         + "En Firmas podés subir una imagen, dibujar y ajustar su tamaño al pie.\n"
                         + "Usá Formulario para completar los datos del evento; al guardar se agrega o actualiza el informe con el número de expediente.\n"
                         + "Exportar permite descargar el elemento seleccionado.\n\n"
@@ -744,18 +771,138 @@ public class TempController {
             return;
         }
         FileChooser selector = new FileChooser();
-        selector.setTitle("Agregar imágenes al expediente");
+        selector.setTitle("Abrir imágenes o un libro de Excel");
         selector.getExtensionFilters().add(new FileChooser.ExtensionFilter(
-                "Imágenes", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp"));
+                "Imágenes y libros de Excel", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp",
+                "*.xlsx", "*.xlsm", "*.xls"));
         List<File> seleccionadas = selector.showOpenMultipleDialog(pestanas.getScene().getWindow());
         if (seleccionadas == null || seleccionadas.isEmpty()) return;
 
+        List<File> libros = new ArrayList<>();
+        for (File archivo : seleccionadas) if (esLibroExcel(archivo)) libros.add(archivo);
+        if (!libros.isEmpty()) {
+            if (libros.size() != 1 || seleccionadas.size() != 1) {
+                showWarning("Abrí un solo libro de Excel por vez.");
+                return;
+            }
+            try {
+                String ruta = data.copiarLibroExcel(libros.get(0));
+                excelParaTabla = data.resolverArchivo(ruta).toFile();
+                refrescarArbolAdjuntos();
+                estado.setText("Libro agregado en Libros: " + excelParaTabla.getName()
+                        + ". Usá Tabla para insertarlo en el expediente.");
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                showWarning("No se pudo agregar el libro de Excel: " + e.getMessage());
+            }
+            return;
+        }
+
         try {
             for (File imagen : seleccionadas) data.copiarImagen(imagen);
+            excelParaTabla = null;
             refrescarArbolAdjuntos();
             estado.setText("Imágenes agregadas al expediente: " + seleccionadas.size());
         } catch (IllegalArgumentException | IllegalStateException e) {
             showWarning("No se pudieron agregar las imágenes: " + e.getMessage());
+        }
+    }
+
+    private boolean esLibroExcel(File archivo) {
+        String nombre = archivo.getName().toLowerCase(java.util.Locale.ROOT);
+        return nombre.endsWith(".xlsx") || nombre.endsWith(".xlsm") || nombre.endsWith(".xls");
+    }
+
+    private void onTabla() {
+        Elemento elegido = menuList.getSelectionModel().getSelectedItem();
+        if (elegido == null) {
+            showWarning("Elegí un elemento del expediente antes de insertar una tabla.");
+            return;
+        }
+        if (excelParaTabla == null || !excelParaTabla.isFile()) {
+            showWarning("Primero usá Abrir para elegir un libro de Excel.");
+            return;
+        }
+        try {
+            List<String> hojas = TablaExcel.hojas(excelParaTabla.toPath());
+            if (hojas.isEmpty()) throw new IOException("El libro no tiene hojas.");
+            ChoiceDialog<String> selector = new ChoiceDialog<>(hojas.get(0), hojas);
+            selector.setTitle("Insertar tabla");
+            selector.setHeaderText("Elegí la hoja que querés insertar");
+            selector.setContentText("Hoja:");
+            selector.initOwner(pestanas.getScene().getWindow());
+            selector.showAndWait().ifPresent(hoja -> {
+                try {
+                    List<List<String>> celdas = TablaExcel.leer(excelParaTabla.toPath(), hoja);
+                    String tabla = TablaExcel.serializar(celdas);
+                    if (tabla.isBlank()) throw new IOException("La hoja no contiene datos.");
+                    elegido.getTablas().add(tabla);
+                    int cursor = contenido.getCaretPosition();
+                    String separador = cursor > 0 && !contenido.getText().substring(0, cursor).endsWith("\n")
+                            ? "\n" : "";
+                    String marcador = TablaExcel.marcador(elegido.getTablas().size(), hoja);
+                    contenido.insertText(cursor, separador + marcador + "\n");
+                    mostrarTablas(elegido);
+                    guardarDatos();
+                    contenido.requestFocus();
+                    estado.setText("Tabla insertada en el expediente: " + hoja);
+                } catch (IOException | RuntimeException e) {
+                    showWarning("No se pudo insertar la tabla: " + e.getMessage());
+                }
+            });
+        } catch (IOException | RuntimeException e) {
+            showWarning("No se pudo abrir el libro de Excel: " + e.getMessage());
+        }
+    }
+
+    private boolean migrarTablasAntiguas(Elemento elemento) {
+        List<String> lineas = java.util.Arrays.asList(elemento.textoProperty().get().split("\\R", -1));
+        StringBuilder texto = new StringBuilder();
+        boolean migrado = false;
+        for (int i = 0; i < lineas.size(); i++) {
+            List<List<String>> tabla = TablaExcel.tablaEn(lineas, i);
+            if (tabla != null) {
+                migrado = true;
+                elemento.getTablas().add(TablaExcel.serializar(tabla));
+                if (texto.length() > 0 && texto.charAt(texto.length() - 1) != '\n') texto.append('\n');
+                texto.append(TablaExcel.marcador(elemento.getTablas().size(), "Importada")).append('\n');
+                while (i + 1 < lineas.size() && TablaExcel.esFila(lineas.get(i + 1))) i++;
+            } else {
+                texto.append(lineas.get(i)).append('\n');
+            }
+        }
+        elemento.textoProperty().set(texto.toString().stripTrailing());
+        return migrado;
+    }
+
+    private void mostrarTablas(Elemento elemento) {
+        tablasInsertadas.getChildren().clear();
+        if (elemento == null || elemento.getTablas().isEmpty()) {
+            tablasInsertadas.setVisible(false);
+            tablasInsertadas.setManaged(false);
+            return;
+        }
+        tablasInsertadas.setVisible(true);
+        tablasInsertadas.setManaged(true);
+        tablasInsertadas.getChildren().add(new Label("Tablas"));
+        for (int i = 0; i < elemento.getTablas().size(); i++) {
+            try {
+                List<List<String>> celdas = TablaExcel.deserializar(elemento.getTablas().get(i));
+                BufferedImage tabla = TablaExcel.imagenPrevia(celdas);
+                ByteArrayOutputStream png = new ByteArrayOutputStream();
+                ImageIO.write(tabla, "png", png);
+                Image vistaPrevia = new Image(new ByteArrayInputStream(png.toByteArray()), 720, 420, true, true);
+                ImageView vista = new ImageView(vistaPrevia);
+                vista.setPreserveRatio(true);
+                int filasVisibles = Math.min(celdas.size(), TablaExcel.filasVistaPrevia());
+                String detalle = celdas.size() > filasVisibles
+                        ? " (vista previa: " + filasVisibles + " de " + celdas.size() + " filas)" : "";
+                Label nombre = new Label("Tabla " + (i + 1) + detalle);
+                VBox tarjeta = new VBox(4, nombre, vista);
+                tarjeta.setStyle("-fx-padding: 8; -fx-background-color: white; -fx-border-color: #c8c8c8;");
+                tablasInsertadas.getChildren().add(tarjeta);
+            } catch (IOException e) {
+                showWarning("No se pudo mostrar la tabla " + (i + 1) + ": " + e.getMessage());
+            }
         }
     }
 
@@ -799,6 +946,11 @@ public class TempController {
         String ruta = (String) seleccionado.getValue();
         File archivo = data.resolverArchivo(ruta).toFile();
         if (!archivo.isFile()) return;
+        if (esLibroExcel(archivo)) {
+            excelParaTabla = archivo;
+            estado.setText("Libro listo para insertar: " + archivo.getName() + ". Pulsá Tabla.");
+            return;
+        }
         abrirArchivoEnPestana(archivo, ruta);
     }
 
@@ -845,6 +997,9 @@ public class TempController {
 
     private void eliminarAdjunto(String ruta) {
         try {
+            Path rutaBorrada = data.resolverArchivo(ruta);
+            if (excelParaTabla != null && (excelParaTabla.toPath().equals(rutaBorrada)
+                    || excelParaTabla.toPath().startsWith(rutaBorrada))) excelParaTabla = null;
             data.eliminarAdjunto(ruta);
             String prefijo = ruta.endsWith("/") ? ruta : ruta + "/";
             for (Elemento elemento : menuList.getItems()) {
@@ -998,7 +1153,7 @@ public class TempController {
         // esa ventana es always-on-top y un diálogo con otro owner quedaría detrás.
         Window duenio = ventanaPropia() != null ? ventanaPropia() : owner;
         DialogoExportacionExpediente.abrir(
-                elegido.getNombre(), contenido.getText(), imagenes, disposicionImagenes,
+                elegido.getNombre(), contenido.getText(), elegido.getTablas(), imagenes, disposicionImagenes,
                 firma, elegido.getAnchoFirmaCm(), duenio);
     }
 
@@ -1084,7 +1239,7 @@ public class TempController {
         for (Elemento elemento : menuList.getItems()) {
             elementos.add(new Data.Item(elemento.getNombre(), elemento.textoProperty().get(),
                     new ArrayList<>(elemento.getImagenes()), elemento.getFirma(),
-                    elemento.getAnchoFirmaCm()));
+                    elemento.getAnchoFirmaCm(), new ArrayList<>(elemento.getTablas())));
         }
         data.guardarElementos(elementos);
         estado.setText("Expediente guardado");
@@ -1099,6 +1254,11 @@ public class TempController {
             contenido.clear();
             contenido.setDisable(true);
             imagenesInsertadas.getChildren().clear();
+            if (tablasInsertadas != null) {
+                tablasInsertadas.getChildren().clear();
+                tablasInsertadas.setVisible(false);
+                tablasInsertadas.setManaged(false);
+            }
             mostrarFirma(null);
             return;
         }
@@ -1149,6 +1309,7 @@ public class TempController {
         private final String nombre;
         private final StringProperty texto = new SimpleStringProperty("");
         private final List<String> imagenes = new ArrayList<>();
+        private final List<String> tablas = new ArrayList<>();
         private String firma = "";
         private double anchoFirmaCm = 6.0;
 
@@ -1166,6 +1327,10 @@ public class TempController {
 
         public List<String> getImagenes() {
             return imagenes;
+        }
+
+        public List<String> getTablas() {
+            return tablas;
         }
 
         public String getFirma() {

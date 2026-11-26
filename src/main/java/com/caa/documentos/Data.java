@@ -23,6 +23,7 @@ public final class Data {
 
     private final Path carpetaExpediente;
     private final Path carpetaImagenes;
+    private final Path carpetaLibros;
     private final Path carpetaFirmas;
     private final Path carpetaAdjuntosAntiguos;
     private final Path archivoElementos;
@@ -34,12 +35,14 @@ public final class Data {
         }
         carpetaExpediente = Almacenamiento.carpetaDatos().resolve("expedientes").resolve(idExpediente);
         carpetaImagenes = carpetaExpediente.resolve("imagenes");
+        carpetaLibros = carpetaExpediente.resolve("Libros");
         carpetaFirmas = carpetaExpediente.resolve("firmas");
         carpetaAdjuntosAntiguos = carpetaExpediente.resolve("archivos");
         archivoElementos = carpetaExpediente.resolve("elementos.tsv");
         archivoGuardado = carpetaExpediente.resolve("guardado.txt");
         try {
             Files.createDirectories(carpetaImagenes);
+            Files.createDirectories(carpetaLibros);
             Files.createDirectories(carpetaFirmas);
         } catch (IOException e) {
             throw new IllegalStateException("No se pudo preparar el expediente.", e);
@@ -81,7 +84,8 @@ public final class Data {
                         }
                     }
                     elementos.add(new Item(decodificar(campos[0]), decodificar(campos[1]),
-                            imagenes, firma, anchoFirma));
+                            imagenes, firma, anchoFirma,
+                            campos.length >= 6 ? decodificarTablas(campos[5]) : Collections.emptyList()));
                 }
             }
             return elementos;
@@ -96,7 +100,8 @@ public final class Data {
             lineas.add(codificar(elemento.getNombre()) + "\t" + codificar(elemento.getTexto())
                     + "\t" + codificar(String.join("\n", elemento.getImagenes()))
                     + "\t" + codificar(elemento.getFirma())
-                    + "\t" + codificar(Double.toString(elemento.getAnchoFirmaCm())));
+                    + "\t" + codificar(Double.toString(elemento.getAnchoFirmaCm()))
+                    + "\t" + codificar(String.join("\u0000", elemento.getTablas())));
         }
         try {
             Almacenamiento.escribir(archivoElementos, lineas);
@@ -116,6 +121,19 @@ public final class Data {
             return rutaRelativa(copiada);
         } catch (IOException e) {
             throw new IllegalStateException("No se pudo copiar la imagen al expediente.", e);
+        }
+    }
+
+    /** Copia un libro de Excel al expediente y devuelve su ruta relativa. */
+    public String copiarLibroExcel(File libro) {
+        if (libro == null || !libro.isFile() || !esLibroExcel(libro.toPath())) {
+            throw new IllegalArgumentException("Seleccioná un libro de Excel válido.");
+        }
+        try {
+            Path destino = destinoUnico(carpetaLibros, libro.getName());
+            return rutaRelativa(Files.copy(libro.toPath(), destino, StandardCopyOption.COPY_ATTRIBUTES));
+        } catch (IOException e) {
+            throw new IllegalStateException("No se pudo copiar el libro de Excel al expediente.", e);
         }
     }
 
@@ -159,6 +177,9 @@ public final class Data {
         List<String> imagenes = listarImagenes();
         if (!imagenes.isEmpty()) adjuntos.add(rutaRelativa(carpetaImagenes));
         adjuntos.addAll(imagenes);
+        List<String> libros = listarLibros();
+        if (!libros.isEmpty()) adjuntos.add(rutaRelativa(carpetaLibros));
+        adjuntos.addAll(libros);
         List<String> firmas = new ArrayList<>();
         agregarImagenes(carpetaFirmas, firmas);
         if (!firmas.isEmpty()) adjuntos.add(rutaRelativa(carpetaFirmas));
@@ -193,10 +214,15 @@ public final class Data {
             vaciarCarpeta(carpetaFirmas);
             return;
         }
+        if (destino.equals(carpetaLibros)) {
+            vaciarCarpeta(carpetaLibros);
+            return;
+        }
         boolean imagen = esRutaImagen(destino) && esImagen(destino);
         boolean firma = esRutaFirma(destino) && esImagen(destino);
-        if ((!imagen && !firma) || Files.notExists(destino)) {
-            throw new IOException("Solo se pueden eliminar imágenes o firmas del expediente.");
+        boolean libro = esRutaLibro(destino) && esLibroExcel(destino);
+        if ((!imagen && !firma && !libro) || Files.notExists(destino)) {
+            throw new IOException("Solo se pueden eliminar imágenes, libros de Excel o firmas del expediente.");
         }
         Files.delete(destino);
     }
@@ -204,6 +230,7 @@ public final class Data {
     /** Vacía todos los elementos y elimina las imágenes y firmas del expediente. */
     public void eliminarTodo() throws IOException {
         vaciarCarpeta(carpetaImagenes);
+        vaciarCarpeta(carpetaLibros);
         vaciarCarpeta(carpetaFirmas);
         vaciarCarpeta(carpetaAdjuntosAntiguos);
         Files.deleteIfExists(archivoGuardado);
@@ -236,12 +263,33 @@ public final class Data {
         }
     }
 
+    private List<String> listarLibros() {
+        List<String> libros = new ArrayList<>();
+        if (Files.notExists(carpetaLibros)) return libros;
+        try (Stream<Path> rutas = Files.walk(carpetaLibros)) {
+            rutas.filter(Files::isRegularFile).filter(Data::esLibroExcel)
+                    .map(this::rutaRelativa).forEach(libros::add);
+        } catch (IOException e) {
+            throw new IllegalStateException("No se pudieron listar los libros de Excel.", e);
+        }
+        return libros;
+    }
+
     private boolean esRutaImagen(Path ruta) {
         return ruta.startsWith(carpetaImagenes) || ruta.startsWith(carpetaAdjuntosAntiguos);
     }
 
     private boolean esRutaFirma(Path ruta) {
         return ruta.startsWith(carpetaFirmas);
+    }
+
+    private boolean esRutaLibro(Path ruta) {
+        return ruta.startsWith(carpetaLibros);
+    }
+
+    private static boolean esLibroExcel(Path ruta) {
+        String nombre = ruta.getFileName().toString().toLowerCase(Locale.ROOT);
+        return nombre.endsWith(".xlsx") || nombre.endsWith(".xlsm") || nombre.endsWith(".xls");
     }
 
     private static Path destinoUnico(Path carpeta, String nombre) {
@@ -272,6 +320,7 @@ public final class Data {
         private final List<String> imagenes;
         private final String firma;
         private final double anchoFirmaCm;
+        private final List<String> tablas;
 
         public Item(String nombre, String texto) {
             this(nombre, texto, Collections.emptyList());
@@ -282,11 +331,17 @@ public final class Data {
         }
 
         public Item(String nombre, String texto, List<String> imagenes, String firma, double anchoFirmaCm) {
+            this(nombre, texto, imagenes, firma, anchoFirmaCm, Collections.emptyList());
+        }
+
+        public Item(String nombre, String texto, List<String> imagenes, String firma, double anchoFirmaCm,
+                    List<String> tablas) {
             this.nombre = nombre;
             this.texto = texto;
             this.imagenes = new ArrayList<>(imagenes);
             this.firma = firma == null ? "" : firma;
             this.anchoFirmaCm = anchoFirmaCm;
+            this.tablas = new ArrayList<>(tablas);
         }
 
         public String getNombre() { return nombre; }
@@ -294,6 +349,7 @@ public final class Data {
         public List<String> getImagenes() { return Collections.unmodifiableList(imagenes); }
         public String getFirma() { return firma; }
         public double getAnchoFirmaCm() { return anchoFirmaCm; }
+        public List<String> getTablas() { return Collections.unmodifiableList(tablas); }
     }
 
     private static String codificar(String texto) {
@@ -308,5 +364,11 @@ public final class Data {
         String lista = decodificar(texto);
         if (lista.isEmpty()) return Collections.emptyList();
         return List.of(lista.split("\\n", -1));
+    }
+
+    private static List<String> decodificarTablas(String texto) {
+        String datos = decodificar(texto);
+        if (datos.isEmpty()) return Collections.emptyList();
+        return List.of(datos.split(String.valueOf((char) 0), -1));
     }
 }

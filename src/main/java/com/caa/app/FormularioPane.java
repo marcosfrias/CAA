@@ -31,13 +31,17 @@ public final class FormularioPane extends BorderPane {
     private final HBox controlesNotificacion = new HBox(4, quitarNotificacion, agregarNotificacion);
     private final Button restablecer = new Button("Restablecer");
     private final Button guardar = new Button("Guardar");
+    private final Button aplicar = new Button("Aplicar");
     private final Consumer<Map<String, String>> alGuardar;
+    private final Consumer<Map<String, String>> alAplicar;
     private Map<String, String> guardado = new LinkedHashMap<>();
     private FormularioModel modelo;
 
-    public FormularioPane(FormularioModel modeloInicial, Consumer<Map<String, String>> alGuardar) {
+    public FormularioPane(FormularioModel modeloInicial, Consumer<Map<String, String>> alGuardar,
+                          Consumer<Map<String, String>> alAplicar) {
         this.modelo = modeloInicial;
         this.alGuardar = alGuardar;
+        this.alAplicar = alAplicar;
         this.guardado.putAll(modeloInicial.getValores());
         scroll.setFitToWidth(true);
 
@@ -73,9 +77,13 @@ public final class FormularioPane extends BorderPane {
             alGuardar.accept(valores);
             guardado = new LinkedHashMap<>(valores);
         });
+        aplicar.setOnAction(e -> {
+            modelo.getForm().persist();
+            alAplicar.accept(modelo.getValores());
+        });
         restablecer.setOnAction(e -> restablecer());
 
-        HBox barra = new HBox(10, restablecer, guardar);
+        HBox barra = new HBox(10, restablecer, guardar, aplicar);
         barra.setPadding(new Insets(10));
         barra.setAlignment(Pos.CENTER_RIGHT);
 

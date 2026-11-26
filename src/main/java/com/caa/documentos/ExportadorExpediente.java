@@ -28,22 +28,22 @@ final class ExportadorExpediente {
     private ExportadorExpediente() {
     }
 
-    static void exportar(String nombre, String contenido, Path carpeta, List<String> formatos, List<File> imagenes,
+    static void exportar(String nombre, String contenido, List<String> tablas, Path carpeta, List<String> formatos, List<File> imagenes,
                          DisposicionImagenes disposicion, File firma, double anchoFirmaCm)
             throws IOException {
         String base = nombre.replaceAll("[\\\\/:*?\"<>|]", "_");
         for (String formato : formatos) {
             switch (formato) {
                 case "word":
-                    escribirWord(carpeta.resolve(base + ".docx"), contenido, imagenes, disposicion, firma, anchoFirmaCm);
+                    escribirWord(carpeta.resolve(base + ".docx"), contenido, tablas, imagenes, disposicion, firma, anchoFirmaCm);
                     break;
                 case "pdf":
-                    escribirPdf(carpeta.resolve(base + ".pdf"), contenido, imagenes, disposicion, firma, anchoFirmaCm);
+                    escribirPdf(carpeta.resolve(base + ".pdf"), contenido, tablas, imagenes, disposicion, firma, anchoFirmaCm);
                     break;
                 case "excel":
                     {
                         Path excel = carpeta.resolve(base + ".xlsx");
-                        escribirExcel(excel, contenido, imagenes, disposicion, firma, anchoFirmaCm);
+                        escribirExcel(excel, contenido, tablas, imagenes, disposicion, firma, anchoFirmaCm);
                     }
                     break;
                 default:
@@ -52,12 +52,22 @@ final class ExportadorExpediente {
         }
     }
 
-    private static void escribirWord(Path archivo, String contenido, List<File> imagenes,
+    private static void escribirWord(Path archivo, String contenido, List<String> tablas, List<File> imagenes,
                                      DisposicionImagenes disposicion, File firma, double anchoFirmaCm) throws IOException {
         StringBuilder parrafos = new StringBuilder();
-        for (String linea : contenido.split("\\R", -1)) {
-            parrafos.append("<w:p><w:r><w:t xml:space=\"preserve\">")
-                    .append(xml(linea)).append("</w:t></w:r></w:p>");
+        String[] lineasContenido = contenido.split("\\R", -1);
+        for (int i = 0; i < lineasContenido.length; i++) {
+            int indiceTabla = TablaExcel.indiceMarcador(lineasContenido[i]);
+            List<List<String>> tabla = indiceTabla >= 0 && indiceTabla < tablas.size()
+                    ? TablaExcel.deserializar(tablas.get(indiceTabla))
+                    : TablaExcel.tablaEn(java.util.Arrays.asList(lineasContenido), i);
+            if (tabla != null) {
+                parrafos.append(tablaWord(tabla));
+                while (i + 1 < lineasContenido.length && TablaExcel.esFila(lineasContenido[i + 1])) i++;
+            } else {
+                parrafos.append("<w:p><w:r><w:t xml:space=\"preserve\">")
+                        .append(xml(lineasContenido[i])).append("</w:t></w:r></w:p>");
+            }
         }
         List<byte[]> imagenesPng = new ArrayList<>();
         List<String> celdasImagenes = new ArrayList<>();
@@ -181,19 +191,66 @@ final class ExportadorExpediente {
         }
     }
 
-    private static void escribirExcel(Path archivo, String contenido, List<File> imagenes,
+    private static String tablaWord(List<List<String>> filas) {
+        int columnas = filas.stream().mapToInt(List::size).max().orElse(1);
+        int anchoColumna = Math.max(300, 9000 / columnas);
+        StringBuilder tabla = new StringBuilder("<w:tbl><w:tblPr><w:tblBorders>")
+                .append("<w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/>")
+                .append("<w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/>")
+                .append("<w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/>")
+                .append("</w:tblBorders></w:tblPr><w:tblGrid>");
+        for (int c = 0; c < columnas; c++) tabla.append("<w:gridCol w:w=\"").append(anchoColumna).append("\"/>");
+        tabla.append("</w:tblGrid>");
+        for (int r = 0; r < filas.size(); r++) {
+            tabla.append("<w:tr>");
+            for (int c = 0; c < columnas; c++) {
+                String valor = c < filas.get(r).size() ? filas.get(r).get(c) : "";
+                tabla.append("<w:tc><w:tcPr><w:tcW w:w=\"").append(anchoColumna).append("\" w:type=\"dxa\"/>");
+                if (r == 0) tabla.append("<w:shd w:fill=\"DDEBF7\"/>");
+                tabla.append("</w:tcPr><w:p><w:r>");
+                if (r == 0) tabla.append("<w:rPr><w:b/></w:rPr>");
+                tabla.append("<w:t xml:space=\"preserve\">").append(xml(valor))
+                        .append("</w:t></w:r></w:p></w:tc>");
+            }
+            tabla.append("</w:tr>");
+        }
+        return tabla.append("</w:tbl>").toString();
+    }
+
+    private static void escribirExcel(Path archivo, String contenido, List<String> tablas, List<File> imagenes,
                                       DisposicionImagenes disposicion, File firma, double anchoFirmaCm) throws IOException {
         String[] lineas = contenido.split("\\R", -1);
         StringBuilder filas = new StringBuilder();
+        int numeroFila = 1;
         for (int i = 0; i < lineas.length; i++) {
-            filas.append("<row r=\"").append(i + 1).append("\"><c r=\"A")
-                    .append(i + 1).append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
-                    .append(xml(lineas[i])).append("</t></is></c></row>");
+            int indiceTabla = TablaExcel.indiceMarcador(lineas[i]);
+            List<List<String>> tabla = indiceTabla >= 0 && indiceTabla < tablas.size()
+                    ? TablaExcel.deserializar(tablas.get(indiceTabla))
+                    : TablaExcel.tablaEn(java.util.Arrays.asList(lineas), i);
+            if (tabla != null) {
+                for (List<String> celdas : tabla) {
+                    filas.append("<row r=\"").append(numeroFila).append("\">");
+                    for (int c = 0; c < celdas.size(); c++) {
+                        filas.append("<c r=\"").append(columnaExcel(c)).append(numeroFila)
+                                .append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
+                                .append(xml(celdas.get(c))).append("</t></is></c>");
+                    }
+                    filas.append("</row>");
+                    numeroFila++;
+                }
+                while (i + 1 < lineas.length && TablaExcel.esFila(lineas[i + 1])) i++;
+            } else {
+                filas.append("<row r=\"").append(numeroFila).append("\"><c r=\"A")
+                        .append(numeroFila).append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
+                        .append(xml(lineas[i])).append("</t></is></c></row>");
+                numeroFila++;
+            }
         }
+        int filaDespuesDelTexto = numeroFila;
         int altoEnFilas = (int) Math.ceil(disposicion.getTamanoCentimetros() * 28.35 / 15.0);
         int altoFilaImagen = altoEnFilas + 2;
         for (int inicio = 0; inicio < imagenes.size(); inicio += disposicion.getColumnas()) {
-            int fila = lineas.length + 1 + (inicio / disposicion.getColumnas()) * altoFilaImagen + altoEnFilas;
+            int fila = filaDespuesDelTexto + 1 + (inicio / disposicion.getColumnas()) * altoFilaImagen + altoEnFilas;
             filas.append("<row r=\"").append(fila).append("\">");
             int fin = Math.min(inicio + disposicion.getColumnas(), imagenes.size());
             for (int i = inicio; i < fin; i++) {
@@ -318,9 +375,36 @@ final class ExportadorExpediente {
         }
     }
 
-    private static void escribirPdf(Path archivo, String contenido, List<File> imagenes,
+    private static String columnaExcel(int indice) {
+        StringBuilder nombre = new StringBuilder();
+        int valor = indice + 1;
+        while (valor > 0) {
+            int resto = (valor - 1) % 26;
+            nombre.insert(0, (char) ('A' + resto));
+            valor = (valor - 1) / 26;
+        }
+        return nombre.toString();
+    }
+
+    private static void escribirPdf(Path archivo, String contenido, List<String> tablas, List<File> imagenes,
                                     DisposicionImagenes disposicion, File firma, double anchoFirmaCm) throws IOException {
-        List<String> lineas = envolver(contenido, 92);
+        List<List<List<String>>> tablasPdf = new ArrayList<>();
+        List<String> lineasOriginales = java.util.Arrays.asList(contenido.split("\\R", -1));
+        StringBuilder textoPdf = new StringBuilder();
+        for (int i = 0; i < lineasOriginales.size(); i++) {
+            int indiceTabla = TablaExcel.indiceMarcador(lineasOriginales.get(i));
+            List<List<String>> tabla = indiceTabla >= 0 && indiceTabla < tablas.size()
+                    ? TablaExcel.deserializar(tablas.get(indiceTabla))
+                    : TablaExcel.tablaEn(lineasOriginales, i);
+            if (tabla != null) {
+                tablasPdf.add(tabla);
+                textoPdf.append("[Tabla ").append(tablasPdf.size()).append("; imagen al final del documento]").append('\n');
+                while (i + 1 < lineasOriginales.size() && TablaExcel.esFila(lineasOriginales.get(i + 1))) i++;
+            } else {
+                textoPdf.append(lineasOriginales.get(i)).append('\n');
+            }
+        }
+        List<String> lineas = envolver(textoPdf.toString(), 540, 10);
         List<List<String>> paginasTexto = new ArrayList<>();
         for (int inicio = 0; inicio < lineas.size(); inicio += 58) {
             paginasTexto.add(lineas.subList(inicio, Math.min(inicio + 58, lineas.size())));
@@ -331,19 +415,19 @@ final class ExportadorExpediente {
         for (File archivoImagen : imagenes) {
             if (archivoImagen.isFile()) {
                 BufferedImage leida = leerImagenReducida(archivoImagen, 700, 1000);
-                if (leida != null) imagenesValidas.add(recortarAlCuadrado(leida));
+                if (leida != null) imagenesValidas.add(leida);
             }
         }
         int columnas = disposicion.getColumnas();
-        int filasPorPagina = 3;
+        int filasPorPagina = 2;
         double separacionImagenes = 12.0;
-        double ladoMaximo = Math.min(disposicion.getTamanoCentimetros() * 28.346,
-                (520.0 - separacionImagenes * (columnas - 1)) / columnas);
+        double anchoCeldaImagen = (540.0 - separacionImagenes * (columnas - 1)) / columnas;
+        double altoMaximoImagen = Math.min(320.0, Math.max(200.0, disposicion.getTamanoCentimetros() * 40.0));
         double separacionTextoImagen = 8.0;
         int imagenesPorPagina = columnas * filasPorPagina;
-        double altoFila = ladoMaximo + 24.0;
+        double altoFila = altoMaximoImagen + 24.0;
         int lineasUltimaPagina = paginasTexto.get(paginasTexto.size() - 1).size();
-        double espacioDespuesTexto = 790 - 12.0 * lineasUltimaPagina - 61 - separacionTextoImagen;
+        double espacioDespuesTexto = 804 - 13.0 * lineasUltimaPagina - 50 - separacionTextoImagen;
         int filasDisponibles = Math.max(0, (int) Math.floor(
                 (espacioDespuesTexto + separacionImagenes) / (altoFila + separacionImagenes)));
         int imagenesEnUltimaPaginaTexto = Math.min(imagenesValidas.size(),
@@ -382,32 +466,37 @@ final class ExportadorExpediente {
             List<String> paginaTexto = paginasTexto.get(indicePaginaTexto);
             int idContenido = objetos.size();
             ByteArrayOutputStream stream = new ByteArrayOutputStream();
-            stream.write("BT\n/F1 10 Tf\n50 790 Td\n12 TL\n".getBytes(StandardCharsets.US_ASCII));
+            stream.write("BT\n/F1 10 Tf\n36 804 Td\n13 TL\n".getBytes(StandardCharsets.US_ASCII));
             for (String linea : paginaTexto) {
                 stream.write(("(" + pdfString(linea) + ") Tj\nT*\n").getBytes(PDF_CHARSET));
             }
             stream.write("ET\n".getBytes(StandardCharsets.US_ASCII));
             StringBuilder recursos = new StringBuilder("<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica ")
                     .append("/Encoding /WinAnsiEncoding >> >> /XObject << ");
-            double limiteInferior = 790 - 12.0 * paginaTexto.size();
+            double limiteInferior = 804 - 13.0 * paginaTexto.size();
             if (indicePaginaTexto == paginasTexto.size() - 1 && imagenesEnUltimaPaginaTexto > 0) {
-                double cursorY = 790 - 12.0 * paginaTexto.size() - separacionTextoImagen;
+                double cursorY = 804 - 13.0 * paginaTexto.size() - separacionTextoImagen;
                 StringBuilder dibujos = new StringBuilder();
                 for (int indice = 0; indice < imagenesEnUltimaPaginaTexto; indice++) {
                     int columna = indice % columnas;
                     int fila = indice / columnas;
                     int imagenesEnFila = Math.min(columnas, imagenesEnUltimaPaginaTexto - fila * columnas);
-                    double anchoFila = imagenesEnFila * ladoMaximo + (imagenesEnFila - 1) * separacionImagenes;
-                    double x = (612 - anchoFila) / 2 + columna * (ladoMaximo + separacionImagenes);
-                    double y = cursorY - fila * (altoFila + separacionImagenes) - ladoMaximo;
+                    double anchoFila = imagenesEnFila * anchoCeldaImagen + (imagenesEnFila - 1) * separacionImagenes;
+                    double xCelda = (612 - anchoFila) / 2 + columna * (anchoCeldaImagen + separacionImagenes);
                     int idImagen = idsImagenes.get(indice);
+                    BufferedImage imagen = imagenesValidas.get(indice);
+                    double escala = Math.min(anchoCeldaImagen / imagen.getWidth(), altoMaximoImagen / imagen.getHeight());
+                    double anchoImagen = imagen.getWidth() * escala;
+                    double altoImagen = imagen.getHeight() * escala;
+                    double x = xCelda + (anchoCeldaImagen - anchoImagen) / 2;
+                    double y = cursorY - fila * (altoFila + separacionImagenes) - altoImagen;
                     dibujos.append(String.format(java.util.Locale.ROOT,
                             "q\n%.2f 0 0 %.2f %.2f %.2f cm\n/Im%d Do\nQ\n",
-                            ladoMaximo, ladoMaximo, x, y, indice));
+                            anchoImagen, altoImagen, x, y, indice));
                     recursos.append("/Im").append(indice).append(' ').append(idImagen).append(" 0 R ");
                     String etiqueta = String.format(java.util.Locale.ROOT,
                             "BT\n/F1 9 Tf\n%.2f %.2f Td\n(Imagen %d) Tj\nET\n",
-                            x + ladoMaximo / 2 - 19, y - 12, indice + 1);
+                            xCelda + anchoCeldaImagen / 2 - 19, y - 12, indice + 1);
                     dibujos.append(etiqueta);
                     limiteInferior = Math.min(limiteInferior, y - 24);
                 }
@@ -445,17 +534,23 @@ final class ExportadorExpediente {
                 int columna = posicion % columnas;
                 int fila = posicion / columnas;
                 int imagenesEnFila = Math.min(columnas, fin - (inicio + fila * columnas));
-                double anchoFila = imagenesEnFila * ladoMaximo + (imagenesEnFila - 1) * separacionImagenes;
-                double x = (612 - anchoFila) / 2 + columna * (ladoMaximo + separacionImagenes);
-                double y = baseY + (filasEnPagina - 1 - fila) * (altoFila + separacionImagenes) + 16;
+                double anchoFila = imagenesEnFila * anchoCeldaImagen + (imagenesEnFila - 1) * separacionImagenes;
+                double xCelda = (612 - anchoFila) / 2 + columna * (anchoCeldaImagen + separacionImagenes);
                 int idImagen = idsImagenes.get(indice);
+                BufferedImage imagen = imagenesValidas.get(indice);
+                double escala = Math.min(anchoCeldaImagen / imagen.getWidth(), altoMaximoImagen / imagen.getHeight());
+                double anchoImagen = imagen.getWidth() * escala;
+                double altoImagen = imagen.getHeight() * escala;
+                double yCelda = baseY + (filasEnPagina - 1 - fila) * (altoFila + separacionImagenes);
+                double x = xCelda + (anchoCeldaImagen - anchoImagen) / 2;
+                double y = yCelda + (altoMaximoImagen - altoImagen) / 2;
                 dibujo.append(String.format(java.util.Locale.ROOT,
                         "q\n%.2f 0 0 %.2f %.2f %.2f cm\n/Im%d Do\nQ\n",
-                        ladoMaximo, ladoMaximo, x, y, posicion));
+                        anchoImagen, altoImagen, x, y, posicion));
                 recursos.append("/Im").append(posicion).append(' ').append(idImagen).append(" 0 R ");
                 dibujo.append(String.format(java.util.Locale.ROOT,
                         "BT\n/F1 9 Tf\n%.2f %.2f Td\n(Imagen %d) Tj\nET\n",
-                        x + ladoMaximo / 2 - 19, y - 12, indice + 1));
+                        xCelda + anchoCeldaImagen / 2 - 19, y - 12, indice + 1));
             }
             if (pagina == paginasImagenes - 1 && idFirma >= 0
                     && baseY + 4 >= 50 + altoFirmaPuntos + 14) {
@@ -472,6 +567,47 @@ final class ExportadorExpediente {
             objetos.add(("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 842] /Resources "
                     + recursos + " /Contents " + idContenido + " 0 R >>").getBytes(StandardCharsets.US_ASCII));
             referenciasPaginas.add(idPagina);
+        }
+        int numeroImagenTabla = 0;
+        for (int indice = 0; indice < tablasPdf.size(); indice++) {
+            List<List<String>> filasTabla = tablasPdf.get(indice);
+            int columnasTabla = TablaExcel.columnas(filasTabla);
+            int columnasPorPagina = TablaExcel.columnasPorPaginaPdf();
+            for (int inicioColumna = 0; inicioColumna < columnasTabla; inicioColumna += columnasPorPagina) {
+                int finColumna = Math.min(columnasTabla, inicioColumna + columnasPorPagina);
+                int inicioFila = 0;
+                while (inicioFila < filasTabla.size()) {
+                    List<List<String>> paginaTabla = new ArrayList<>();
+                    if (inicioFila > 0) paginaTabla.add(filasTabla.get(0));
+                    int capacidad = TablaExcel.filasPorPaginaPdf() - paginaTabla.size();
+                    int finFila = Math.min(filasTabla.size(), inicioFila + capacidad);
+                    paginaTabla.addAll(filasTabla.subList(inicioFila, finFila));
+                    BufferedImage imagenTabla = TablaExcel.imagenPdf(paginaTabla, inicioColumna, finColumna);
+                    double escala = Math.min(770.0 / imagenTabla.getWidth(), 480.0 / imagenTabla.getHeight());
+                    double anchoTabla = imagenTabla.getWidth() * escala;
+                    double altoTabla = imagenTabla.getHeight() * escala;
+                    int idTabla = agregarImagenPdf(objetos, imagenTabla);
+                    String dibujo = "BT\n/F1 10 Tf\n36 580 Td\n(" + pdfString("Tabla " + (indice + 1)
+                            + " - filas " + (inicioFila + 1) + " a " + finFila + "; columnas "
+                            + (inicioColumna + 1) + " a " + finColumna) + ") Tj\nET\n"
+                            + String.format(java.util.Locale.ROOT,
+                                    "q\n%.2f 0 0 %.2f %.2f %.2f cm\n/T%d Do\nQ\n",
+                                    anchoTabla, altoTabla, (842 - anchoTabla) / 2, (612 - altoTabla) / 2,
+                                    numeroImagenTabla);
+                    byte[] datos = dibujo.getBytes(PDF_CHARSET);
+                    int idContenido = objetos.size();
+                    objetos.add(concatenar(("<< /Length " + datos.length + " >>\nstream\n").getBytes(StandardCharsets.US_ASCII),
+                            datos, "\nendstream".getBytes(StandardCharsets.US_ASCII)));
+                    int idPagina = objetos.size();
+                    String recursos = "<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+                            + "/Encoding /WinAnsiEncoding >> >> /XObject << /T" + numeroImagenTabla + " " + idTabla + " 0 R >> >>";
+                    objetos.add(("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 612] /Resources "
+                            + recursos + " /Contents " + idContenido + " 0 R >>").getBytes(StandardCharsets.US_ASCII));
+                    referenciasPaginas.add(idPagina);
+                    numeroImagenTabla++;
+                    inicioFila = finFila;
+                }
+            }
         }
         if (idFirma >= 0 && !firmaIncluida) {
             byte[] datos = dibujoFirmaPdf(anchoFirmaPuntos, altoFirmaPuntos)
@@ -511,16 +647,41 @@ final class ExportadorExpediente {
         java.nio.file.Files.write(archivo, pdf.toByteArray());
     }
 
-    private static List<String> envolver(String texto, int ancho) {
+    private static List<String> envolver(String texto, double anchoPuntos, int tamanoFuente) {
         List<String> resultado = new ArrayList<>();
+        java.awt.Font fuente = new java.awt.Font("Helvetica", java.awt.Font.PLAIN, tamanoFuente);
+        java.awt.font.FontRenderContext contexto = new java.awt.font.FontRenderContext(null, true, true);
         for (String linea : texto.split("\\R", -1)) {
             if (linea.isEmpty()) {
                 resultado.add("");
                 continue;
             }
-            for (int inicio = 0; inicio < linea.length(); inicio += ancho) {
-                resultado.add(linea.substring(inicio, Math.min(inicio + ancho, linea.length())));
+            StringBuilder actual = new StringBuilder();
+            for (String palabra : linea.trim().split("\\s+")) {
+                String candidato = actual.length() == 0 ? palabra : actual + " " + palabra;
+                if (fuente.getStringBounds(candidato, contexto).getWidth() <= anchoPuntos) {
+                    if (actual.length() > 0) actual.append(' ');
+                    actual.append(palabra);
+                    continue;
+                }
+                if (actual.length() > 0) {
+                    resultado.add(actual.toString());
+                    actual.setLength(0);
+                }
+                StringBuilder fragmento = new StringBuilder();
+                for (int i = 0; i < palabra.length(); i++) {
+                    fragmento.append(palabra.charAt(i));
+                    if (fuente.getStringBounds(fragmento.toString(), contexto).getWidth() > anchoPuntos) {
+                        char ultimo = fragmento.charAt(fragmento.length() - 1);
+                        fragmento.setLength(fragmento.length() - 1);
+                        if (fragmento.length() > 0) resultado.add(fragmento.toString());
+                        fragmento.setLength(0);
+                        fragmento.append(ultimo);
+                    }
+                }
+                actual.append(fragmento);
             }
+            if (actual.length() > 0) resultado.add(actual.toString());
         }
         return resultado;
     }

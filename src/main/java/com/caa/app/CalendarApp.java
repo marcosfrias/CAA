@@ -24,7 +24,6 @@ import com.calendarfx.view.CalendarView;
 import com.calendarfx.view.CalendarSelector;
 import com.calendarfx.view.YearMonthView;
 import com.calendarfx.view.DateControl;
-import com.calendarfx.view.AllDayView;
 import com.calendarfx.view.VirtualGrid;
 import com.calendarfx.view.Messages;
 import com.calendarfx.model.Interval;
@@ -42,10 +41,10 @@ import javafx.scene.Scene;
 import javafx.scene.Node;
 import javafx.scene.image.Image;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
@@ -59,7 +58,10 @@ import javafx.util.Duration;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ChoiceDialog;
+import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
 import javafx.scene.Parent;
+import javafx.stage.FileChooser;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -70,7 +72,9 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -79,26 +83,33 @@ import java.time.Month;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.LinkedHashSet;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Properties;
+import java.io.File;
+import java.time.format.DateTimeFormatter;
 
 public class CalendarApp extends Application {
 
     static final String PROPIEDAD_ACTIVIDAD = "actividad";
     private static final String PROPIEDAD_EXPEDIENTE = "expedienteId";
+    private static final String PROPIEDAD_NOTIFICACION = "notificacionId";
+    private static final String PROPIEDAD_LISTENER_TITULO_AUDITORIA = "listenerTituloAuditoria";
     private static final ZoneId ZONA_ARGENTINA = ZoneId.of("America/Argentina/Cordoba");
     private static final Path CARPETA = Almacenamiento.carpetaDatos();
     private static final Path ARCHIVO_INDUSTRIAS = CARPETA.resolve("industrias.txt");
     private static final Path ARCHIVO_ACTIVIDADES = CARPETA.resolve("actividades.txt");
     private static final Path ARCHIVO_EVENTOS = CARPETA.resolve("eventos.txt");
+    private static final Path ARCHIVO_NOTIFICACIONES = CARPETA.resolve("notificaciones.txt");
 
     private final CalendarSource industrias = new CalendarSource("Industrias");
     private final CalendarSource actividades = new CalendarSource("Actividad");
     private final List<CalendarSource> grupos = List.of(industrias, actividades);
     private final Map<Calendar, Style> estilos = new HashMap<>();
     private final Set<Entry<?>> entradas = new LinkedHashSet<>();
+    private final List<Notificacion> notificaciones = new ArrayList<>();
     // Calendario que nunca se muestra: evita que CalendarFX abra su propio aviso
     // ("no se puede crear el evento") cuando todavía no hay industrias.
     private final Calendar calendarioAuxiliar = new Calendar("Sin industria");
@@ -111,6 +122,9 @@ public class CalendarApp extends Application {
     private final Map<String, Stage> ventanasExpediente = new HashMap<>();
     private BotonNotificacion botonNotificaciones;
     private boolean hayNotificaciones = false;
+    private Timeline controlNotificaciones;
+    private Entry<?> eventoCopiado;
+    private Calendar calendarioEventoCopiado;
 
     @Override
     public void start(Stage stage) {
@@ -141,6 +155,7 @@ public class CalendarApp extends Application {
         cargarIndustrias();
         cargarActividades();
         cargarEventos();
+        cargarNotificaciones();
         // La fuente vacía mantiene espacio entre los grupos en el desplegable.
         calendarView.getCalendarSources().setAll(industrias, new CalendarSource(" "), actividades);
         instalarSelectorSoloIndustrias(calendarView);
@@ -160,9 +175,12 @@ public class CalendarApp extends Application {
         stage.show();
 
         botonNotificaciones = new BotonNotificacion();
+        botonNotificaciones.setOnAction(evento -> abrirNotificacionesPendientes());
         datos = new Datos(calendarView, grupos, actividades, entradas);
         datos.setAccesorioFinal(botonNotificaciones);
         datos.instalar(root);
+        actualizarEstadoNotificaciones();
+        iniciarControlNotificaciones();
 
         calendarView.selectedPageProperty().addListener((obs, anterior, pagina) -> {
             if (pagina == CalendarView.Page.YEAR) {
@@ -173,6 +191,8 @@ public class CalendarApp extends Application {
             Platform.runLater(() -> configurarColoresAnuales(calendarView));
         }
 
+        configurarBotonImportar(calendarView.getDayPage().getToolBarControls());
+        configurarBotonImportar(calendarView.getWeekPage().getToolBarControls());
         Button[] botones = {crearBotonAgregar(), crearBotonEliminar()};
         calendarView.selectedPageProperty().addListener((obs, anterior, actual) ->
                 Platform.runLater(() -> insertarBotonesEnBarra(root, botones)));
@@ -209,6 +229,7 @@ public class CalendarApp extends Application {
 
     @Override
     public void stop() {
+        if (controlNotificaciones != null) controlNotificaciones.stop();
         guardarIndustrias();
         guardarGrupo(actividades);
         guardarEventos();
@@ -237,6 +258,9 @@ public class CalendarApp extends Application {
     }
 
     private void eliminarCalendario(Calendar calendario) {
+        for (Entry<?> entrada : new ArrayList<>(entradas)) {
+            if (entrada.getCalendar() == calendario) eliminarNotificacionDe(entrada);
+        }
         entradas.removeIf(en -> en.getCalendar() == calendario); // sus eventos dejan de guardarse
         estilos.remove(calendario);                              // el color queda libre
         for (CalendarSource grupo : grupos) {
@@ -276,6 +300,311 @@ public class CalendarApp extends Application {
             });
         });
         return boton;
+    }
+
+    private void configurarBotonImportar(Node controles) {
+        ToggleButton boton = buscarBotonAgrupar(controles);
+        if (boton == null) return;
+        boolean seleccionOriginal = boton.isSelected();
+        boton.setTooltip(new Tooltip("Cargar datos o restablecer la aplicación"));
+        boton.setAccessibleText("Cargar datos o restablecer la aplicación");
+        boton.setOnAction(evento -> {
+            boton.setSelected(seleccionOriginal);
+            javafx.scene.control.ContextMenu menu = new javafx.scene.control.ContextMenu();
+            javafx.scene.control.MenuItem cargar = new javafx.scene.control.MenuItem("Cargar datos desde Excel");
+            cargar.setOnAction(accion -> importarExcel());
+            javafx.scene.control.MenuItem reiniciar = new javafx.scene.control.MenuItem("Eliminar todos los datos");
+            reiniciar.setOnAction(accion -> confirmarRestablecimiento());
+            menu.getItems().setAll(cargar, reiniciar);
+            menu.show(boton, javafx.geometry.Side.BOTTOM, 0, 0);
+        });
+    }
+
+    private static ToggleButton buscarBotonAgrupar(Node nodo) {
+        if (nodo == null) return null;
+        if ("layout-button".equals(nodo.getId()) && nodo instanceof ToggleButton) {
+            return (ToggleButton) nodo;
+        }
+        if (nodo instanceof Parent) {
+            for (Node hijo : ((Parent) nodo).getChildrenUnmodifiable()) {
+                ToggleButton encontrado = buscarBotonAgrupar(hijo);
+                if (encontrado != null) return encontrado;
+            }
+        }
+        return null;
+    }
+
+    private void importarExcel() {
+        FileChooser selector = new FileChooser();
+        selector.setTitle("Cargar datos desde Excel");
+        selector.getExtensionFilters().add(new FileChooser.ExtensionFilter(
+                "Libro de Excel (.xlsx)", "*.xlsx"));
+        File archivo = selector.showOpenDialog(ventana);
+        if (archivo == null) return;
+
+        ImportadorExcel.Resultado resultado;
+        try {
+            resultado = ImportadorExcel.leer(archivo.toPath());
+        } catch (IOException | RuntimeException error) {
+            mostrarAlerta(Alert.AlertType.ERROR, "No se pudo leer el Excel", error.getMessage());
+            return;
+        }
+        if (resultado.registros.isEmpty()) {
+            mostrarAlerta(Alert.AlertType.WARNING, "Excel sin registros",
+                    "No encontré filas con una empresa para importar.");
+            return;
+        }
+
+        Set<String> industriasExistentes = nombresNormalizados(industrias);
+        Set<String> actividadesExistentes = nombresNormalizados(actividades);
+        Set<String> industriasNuevas = new HashSet<>();
+        Set<String> actividadesNuevas = new HashSet<>();
+        Set<String> eventosExistentes = clavesEventos();
+        int eventosNuevos = 0;
+        int fechasValidas = 0;
+        for (ImportadorExcel.Registro registro : resultado.registros) {
+            String empresa = ImportadorExcel.normalizar(registro.empresa);
+            if (!empresa.isEmpty() && !industriasExistentes.contains(empresa)) industriasNuevas.add(empresa);
+            String actividad = ImportadorExcel.normalizar(registro.actividad);
+            if (!actividad.isEmpty() && !actividadesExistentes.contains(actividad)) actividadesNuevas.add(actividad);
+            for (ImportadorExcel.Fecha fecha : registro.fechas) {
+                fechasValidas++;
+                String titulo = tituloEventoImportado(registro, fecha);
+                String idExpediente = idExpedienteImportado(registro, archivo.toPath(), resultado.hoja);
+                String clave = claveEvento(empresa, titulo, fecha.fecha, idExpediente);
+                if (eventosExistentes.add(clave)) eventosNuevos++;
+            }
+        }
+
+        String resumen = "Hoja: " + resultado.hoja
+                + "\nFilas de empresas: " + resultado.registros.size()
+                + "\nEmpresas nuevas: " + industriasNuevas.size()
+                + "\nActividades nuevas: " + actividadesNuevas.size()
+                + "\nEventos nuevos: " + eventosNuevos + " (" + fechasValidas + " fechas válidas)"
+                + (resultado.fechasInvalidas == 0 ? "" : "\nFechas que se omitirán por formato inválido: " + resultado.fechasInvalidas)
+                + "\n\nLos eventos se agendarán a las 10:00 y durarán una hora. ¿Continuar?";
+        Alert confirmar = new Alert(Alert.AlertType.CONFIRMATION, resumen, ButtonType.OK, ButtonType.CANCEL);
+        confirmar.setTitle("Confirmar importación");
+        confirmar.setHeaderText(null);
+        confirmar.initOwner(ventana);
+        if (confirmar.showAndWait().filter(tipo -> tipo == ButtonType.OK).isEmpty()) return;
+
+        aplicarImportacion(resultado, archivo.toPath());
+    }
+
+    private void confirmarRestablecimiento() {
+        ButtonType borrarTodo = new ButtonType("Eliminar todo", ButtonBar.ButtonData.OK_DONE);
+        Alert confirmar = new Alert(Alert.AlertType.CONFIRMATION,
+                "Se eliminarán todas las empresas, actividades, eventos, expedientes, archivos adjuntos "
+                        + "y notificaciones guardados en la aplicación. Esta acción no se puede deshacer.",
+                borrarTodo, ButtonType.CANCEL);
+        confirmar.setTitle("Restablecer datos");
+        confirmar.setHeaderText("¿Volver la aplicación a cero?");
+        confirmar.initOwner(ventana);
+        if (confirmar.showAndWait().filter(tipo -> tipo == borrarTodo).isPresent()) {
+            restablecerDatos();
+        }
+    }
+
+    private void restablecerDatos() {
+        guardadoPendiente.stop();
+        if (ventanaFormsFx != null) {
+            ventanaFormsFx.close();
+            ventanaFormsFx = null;
+            formularioFormsFxId = null;
+        }
+        for (Stage etapa : new ArrayList<>(ventanasExpediente.values())) etapa.close();
+        ventanasExpediente.clear();
+
+        try {
+            eliminarArbol(CARPETA.resolve("expedientes"));
+            eliminarArbol(CARPETA.resolve("notificaciones"));
+            Files.deleteIfExists(ARCHIVO_INDUSTRIAS);
+            Files.deleteIfExists(ARCHIVO_ACTIVIDADES);
+            Files.deleteIfExists(ARCHIVO_EVENTOS);
+            Files.deleteIfExists(ARCHIVO_NOTIFICACIONES);
+        } catch (IOException error) {
+            mostrarAlerta(Alert.AlertType.ERROR, "No se pudieron eliminar todos los datos",
+                    "La aplicación pudo quedar parcialmente restablecida.\n" + error.getMessage());
+            return;
+        }
+
+        cargando = true;
+        for (CalendarSource grupo : grupos) grupo.getCalendars().clear();
+        entradas.clear();
+        notificaciones.clear();
+        estilos.clear();
+        eventoCopiado = null;
+        calendarioEventoCopiado = null;
+        cargando = false;
+        if (datos != null) datos.refrescar();
+        actualizarEstadoNotificaciones();
+        mostrarAlerta(Alert.AlertType.INFORMATION, "Aplicación restablecida",
+                "Se eliminaron las empresas, actividades, eventos, expedientes, adjuntos y notificaciones.");
+    }
+
+    private static void eliminarArbol(Path carpeta) throws IOException {
+        if (Files.notExists(carpeta)) return;
+        Path[] rutasOrdenadas;
+        try (var rutas = Files.walk(carpeta)) {
+            rutasOrdenadas = rutas.sorted(Comparator.reverseOrder()).toArray(Path[]::new);
+        }
+        for (Path ruta : rutasOrdenadas) Files.deleteIfExists(ruta);
+    }
+
+    private void aplicarImportacion(ImportadorExcel.Resultado resultado, Path archivo) {
+        Map<String, Calendar> calendariosIndustrias = indiceCalendarios(industrias);
+        Map<String, Calendar> calendariosActividades = indiceCalendarios(actividades);
+        Set<String> clavesEventos = clavesEventos();
+        int empresasNuevas = 0;
+        int actividadesNuevas = 0;
+        int eventosNuevos = 0;
+        boolean estabaCargando = cargando;
+        cargando = true;
+        try {
+            for (ImportadorExcel.Registro registro : resultado.registros) {
+                String claveEmpresa = ImportadorExcel.normalizar(registro.empresa);
+                Calendar calendarioEmpresa = calendariosIndustrias.get(claveEmpresa);
+                if (calendarioEmpresa == null) {
+                    agregarCalendario(industrias, registro.empresa.trim());
+                    calendarioEmpresa = industrias.getCalendars().get(industrias.getCalendars().size() - 1);
+                    calendariosIndustrias.put(claveEmpresa, calendarioEmpresa);
+                    empresasNuevas++;
+                }
+
+                String actividad = registro.actividad.trim();
+                String claveActividad = ImportadorExcel.normalizar(actividad);
+                if (!actividad.isEmpty() && !calendariosActividades.containsKey(claveActividad)) {
+                    agregarCalendario(actividades, actividad);
+                    Calendar nuevo = actividades.getCalendars().get(actividades.getCalendars().size() - 1);
+                    calendariosActividades.put(claveActividad, nuevo);
+                    actividadesNuevas++;
+                }
+
+                if (registro.fechas.isEmpty()) continue;
+                String idExpediente = idExpedienteImportado(registro, archivo, resultado.hoja);
+                Map<String, String> formulario = cargarFormulario(idExpediente);
+                boolean cambioFormulario = false;
+                for (Map.Entry<String, String> valor : formularioImportado(registro).entrySet()) {
+                    String anterior = formulario.get(valor.getKey());
+                    if ((anterior == null || anterior.isBlank()) && !valor.getValue().isBlank()) {
+                        formulario.put(valor.getKey(), valor.getValue());
+                        cambioFormulario = true;
+                    }
+                }
+                if (cambioFormulario) guardarFormulario(idExpediente, formulario);
+
+                for (ImportadorExcel.Fecha fecha : registro.fechas) {
+                    String titulo = tituloEventoImportado(registro, fecha);
+                    String clave = claveEvento(claveEmpresa, titulo, fecha.fecha, idExpediente);
+                    if (!clavesEventos.add(clave)) continue;
+                    Entry<Object> entrada = new Entry<>(titulo);
+                    LocalDateTime inicio = LocalDateTime.of(fecha.fecha, LocalTime.of(10, 0));
+                    entrada.setInterval(new Interval(inicio, inicio.plusHours(1), ZONA_ARGENTINA));
+                    entrada.setLocation(registro.domicilio);
+                    entrada.getProperties().put(PROPIEDAD_EXPEDIENTE, idExpediente);
+                    if (!actividad.isEmpty()) entrada.getProperties().put(PROPIEDAD_ACTIVIDAD, actividad);
+                    calendarioEmpresa.addEntry(entrada);
+                    entradas.add(entrada);
+                    eventosNuevos++;
+                }
+            }
+        } finally {
+            cargando = estabaCargando;
+        }
+        guardarIndustrias();
+        guardarGrupo(actividades);
+        guardarEventos();
+        if (datos != null) datos.refrescar();
+        actualizarEstadoNotificaciones();
+        mostrarAlerta(Alert.AlertType.INFORMATION, "Importación completada",
+                "Empresas agregadas: " + empresasNuevas
+                        + "\nActividades agregadas: " + actividadesNuevas
+                        + "\nEventos agendados: " + eventosNuevos
+                        + "\n\nLos expedientes asociados a eventos se pueden abrir desde el evento del calendario.");
+    }
+
+    private Map<String, String> formularioImportado(ImportadorExcel.Registro registro) {
+        Map<String, String> valores = new LinkedHashMap<>();
+        valores.put("company", registro.empresa.trim());
+        valores.put("fileNumber", registro.expediente.trim());
+        valores.put("email", registro.email.trim());
+        valores.put("actividad", registro.actividad.trim());
+        if (!registro.consultor.isBlank()) valores.put("auditoriaConsultor1", registro.consultor);
+        if (!registro.descripcion.isBlank() || !registro.domicilio.isBlank()) {
+            String observaciones = registro.descripcion;
+            if (!registro.domicilio.isBlank()) {
+                if (!observaciones.isBlank()) observaciones += "\n";
+                observaciones += registro.domicilio;
+            }
+            valores.put("observations", observaciones);
+        }
+        int auditoria = 0;
+        int notificacion = 0;
+        for (ImportadorExcel.Fecha fecha : registro.fechas) {
+            String tipo = ImportadorExcel.normalizar(fecha.etiqueta);
+            String mostrado = fecha.fecha.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+            if (tipo.contains("NOTIFIC")) {
+                notificacion++;
+                valores.put("notificacion" + notificacion, fecha.etiqueta + ": " + mostrado);
+            } else {
+                auditoria++;
+                valores.put("auditoriaFecha" + auditoria, mostrado);
+            }
+        }
+        int resolucion = 0;
+        for (ImportadorExcel.Resolucion item : registro.resoluciones) {
+            resolucion++;
+            valores.put("resolucionAnio" + resolucion, String.valueOf(item.anio));
+            valores.put("resolucion" + resolucion, item.texto);
+        }
+        return valores;
+    }
+
+    private static String idExpedienteImportado(ImportadorExcel.Registro registro, Path archivo, String hoja) {
+        String numero = registro.expediente.isBlank()
+                ? archivo.getFileName() + "|" + hoja + "|" + registro.fila
+                : ImportadorExcel.normalizar(registro.expediente);
+        String llave = ImportadorExcel.normalizar(registro.empresa) + "|" + numero;
+        return UUID.nameUUIDFromBytes(llave.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private static String tituloEventoImportado(ImportadorExcel.Registro registro, ImportadorExcel.Fecha fecha) {
+        String tipo = ImportadorExcel.normalizar(fecha.etiqueta);
+        String nombre = tipo.contains("NOTIFIC") ? "Notificación CAA"
+                : tipo.contains("AUDITOR") ? "Auditoría" : fecha.etiqueta.trim();
+        return nombre + " — " + registro.empresa.trim();
+    }
+
+    private Set<String> nombresNormalizados(CalendarSource grupo) {
+        Set<String> resultado = new HashSet<>();
+        for (Calendar calendario : grupo.getCalendars()) {
+            resultado.add(ImportadorExcel.normalizar(calendario.getName()));
+        }
+        return resultado;
+    }
+
+    private Map<String, Calendar> indiceCalendarios(CalendarSource grupo) {
+        Map<String, Calendar> resultado = new LinkedHashMap<>();
+        for (Calendar calendario : grupo.getCalendars()) {
+            resultado.putIfAbsent(ImportadorExcel.normalizar(calendario.getName()), calendario);
+        }
+        return resultado;
+    }
+
+    private Set<String> clavesEventos() {
+        Set<String> resultado = new HashSet<>();
+        for (Entry<?> entrada : entradas) {
+            if (entrada.getCalendar() == null || entrada.isRecurrence()) continue;
+            resultado.add(claveEvento(ImportadorExcel.normalizar(entrada.getCalendar().getName()),
+                    entrada.getTitle(), entrada.getInterval().getStartDateTime().toLocalDate(),
+                    String.valueOf(entrada.getProperties().getOrDefault(PROPIEDAD_EXPEDIENTE, ""))));
+        }
+        return resultado;
+    }
+
+    private static String claveEvento(String empresa, String titulo, LocalDate fecha, String idExpediente) {
+        return empresa + "|" + ImportadorExcel.normalizar(titulo) + "|" + fecha + "|" + idExpediente;
     }
 
     private Button crearBotonEliminar() {
@@ -338,7 +667,7 @@ public class CalendarApp extends Application {
             guardarFormulario(idFormulario, valores);
             actualizarActividadEvento(entrada, valores.get("actividad"));
             controladorExpediente.generarInformeFormulario(valores);
-        });
+        }, controladorExpediente::generarInformeFormulario);
 
         Stage demo = new Stage();
         demo.initOwner(owner);
@@ -384,9 +713,11 @@ public class CalendarApp extends Application {
         Object actividad = entrada.getProperties().get(PROPIEDAD_ACTIVIDAD);
         if (actividad instanceof String) ponerSiVacio(valores, "actividad", (String) actividad);
 
-        LocalDate fecha = entrada.getInterval().getStartDateTime().toLocalDate();
-        ponerSiVacio(valores, "auditoriaFecha1", String.format("%02d/%02d/%04d",
-                fecha.getDayOfMonth(), fecha.getMonthValue(), fecha.getYear()));
+        if (!entrada.getTitle().startsWith("Notificación CAA")) {
+            LocalDate fecha = entrada.getInterval().getStartDateTime().toLocalDate();
+            ponerSiVacio(valores, "auditoriaFecha1", String.format("%02d/%02d/%04d",
+                    fecha.getDayOfMonth(), fecha.getMonthValue(), fecha.getYear()));
+        }
     }
 
     private static void ponerSiVacio(Map<String, String> valores, String clave, String dato) {
@@ -422,6 +753,8 @@ public class CalendarApp extends Application {
                 if (contenido instanceof com.calendarfx.view.popover.EntryPopOverContentPane) {
                     com.calendarfx.view.popover.EntryPopOverContentPane panel =
                             (com.calendarfx.view.popover.EntryPopOverContentPane) contenido;
+                    prepararTituloAuditoria(panel.getEntry());
+                    reemplazarControlTodoElDia(panel);
                     agregarBotonExpedienteEnDetalles(panel);
                     reemplazarUbicacionPorNotificacion(panel);
                 }
@@ -474,13 +807,127 @@ public class CalendarApp extends Application {
             }
         }
 
-        Entry<Object> entrada = new Entry<>(Messages.getString("DateControl.DEFAULT_ENTRY_TITLE"));
+        Calendar calendario = param.getCalendar();
+        String titulo = calendario == null
+                ? Messages.getString("DateControl.DEFAULT_ENTRY_TITLE")
+                : tituloAuditoria(calendario);
+        Entry<Object> entrada = new Entry<>(titulo);
         entrada.setInterval(new Interval(tiempo.toLocalDateTime(),
                 tiempo.toLocalDateTime().plusHours(1), tiempo.getZone()));
-        if (control instanceof AllDayView) {
-            entrada.setFullDay(true);
-        }
         return entrada;
+    }
+
+    /** Reemplaza la fila Todo el día por el intervalo desde la auditoría anterior. */
+    private void reemplazarControlTodoElDia(
+            com.calendarfx.view.popover.EntryPopOverContentPane panel) {
+        if (panel.getPanes().isEmpty()) return;
+        Node contenido = panel.getPanes().get(0).getContent();
+        if (!(contenido instanceof Parent)) return;
+
+        GridPane grilla = buscarGrillaTodoElDia((Parent) contenido);
+        if (grilla == null) return;
+
+        javafx.scene.control.CheckBox casilla = null;
+        javafx.scene.control.Label etiquetaTodoElDia = null;
+        for (Node nodo : new ArrayList<>(grilla.getChildren())) {
+            Integer fila = GridPane.getRowIndex(nodo);
+            if (fila != null && fila != 0) continue;
+            if (nodo instanceof javafx.scene.control.CheckBox) {
+                casilla = (javafx.scene.control.CheckBox) nodo;
+            } else if (nodo instanceof javafx.scene.control.Label) {
+                etiquetaTodoElDia = (javafx.scene.control.Label) nodo;
+            }
+        }
+        if (casilla == null || etiquetaTodoElDia == null) return;
+
+        Entry<?> entrada = panel.getEntry();
+        if (entrada.isFullDay()) entrada.setFullDay(false);
+        grilla.getChildren().removeAll(casilla, etiquetaTodoElDia);
+
+        javafx.scene.control.Label etiquetaDias = new javafx.scene.control.Label("Última Auditoría:");
+        javafx.scene.control.Label valorDias = new javafx.scene.control.Label();
+        HBox filaAuditoria = new HBox(8, etiquetaDias, valorDias);
+        filaAuditoria.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        Runnable actualizarDias = () -> valorDias.setText(textoUltimaAuditoria(entrada));
+        actualizarDias.run();
+        entrada.intervalProperty().addListener(observable -> actualizarDias.run());
+        entrada.calendarProperty().addListener(observable -> actualizarDias.run());
+        grilla.add(filaAuditoria, 0, 0, 2, 1);
+    }
+
+    private String textoUltimaAuditoria(Entry<?> entrada) {
+        String dias = diasDesdeUltimaAuditoria(entrada, entradas);
+        if ("Sin auditoría anterior".equals(dias)) return dias;
+        try {
+            long cantidad = Long.parseLong(dias);
+            return "hace " + cantidad + (cantidad == 1 ? " día" : " días");
+        } catch (NumberFormatException ignorada) {
+            return dias;
+        }
+    }
+
+    private GridPane buscarGrillaTodoElDia(Parent raiz) {
+        if (raiz instanceof GridPane) {
+            GridPane grilla = (GridPane) raiz;
+            boolean tieneCasillaFilaInicial = grilla.getChildren().stream().anyMatch(nodo ->
+                    nodo instanceof javafx.scene.control.CheckBox
+                            && (GridPane.getRowIndex(nodo) == null || GridPane.getRowIndex(nodo) == 0));
+            if (tieneCasillaFilaInicial) return grilla;
+        }
+        for (Node nodo : raiz.getChildrenUnmodifiable()) {
+            if (nodo instanceof Parent) {
+                GridPane encontrada = buscarGrillaTodoElDia((Parent) nodo);
+                if (encontrada != null) return encontrada;
+            }
+        }
+        return null;
+    }
+
+    /** Mantiene el título como "Auditoría + industria" mientras siga siendo automático. */
+    private void prepararTituloAuditoria(Entry<?> entrada) {
+        Calendar calendario = entrada.getCalendar();
+        if (calendario == null) return;
+
+        String tituloPredeterminado = Messages.getString("DateControl.DEFAULT_ENTRY_TITLE");
+        boolean eraPredeterminado = entrada.getTitle() == null
+                || entrada.getTitle().isBlank()
+                || entrada.getTitle().equalsIgnoreCase(tituloPredeterminado)
+                || entrada.getTitle().equalsIgnoreCase("Nuevo Evento");
+        String tituloAutomaticoAnterior = "Auditoría " + calendario.getName();
+        boolean eraTituloAutomaticoAnterior = entrada.getTitle() != null
+                && entrada.getTitle().equalsIgnoreCase(tituloAutomaticoAnterior);
+        boolean eraTituloConExpediente = false;
+        Object id = entrada.getProperties().get(PROPIEDAD_EXPEDIENTE);
+        if (id instanceof String && entrada.getTitle() != null
+                && entrada.getTitle().startsWith("Auditoría — ")) {
+            String numero = cargarFormulario((String) id).get("fileNumber");
+            if (numero != null && !numero.isBlank()
+                    && entrada.getTitle().equalsIgnoreCase("Auditoría — " + numero.trim())) {
+                eraTituloConExpediente = true;
+            }
+        }
+        if (eraPredeterminado || eraTituloAutomaticoAnterior || eraTituloConExpediente) {
+            entrada.setTitle(tituloAuditoria(calendario));
+        }
+
+        if (Boolean.TRUE.equals(entrada.getProperties().get(PROPIEDAD_LISTENER_TITULO_AUDITORIA))) return;
+        String tituloInicial = entrada.getTitle();
+        boolean tituloAutomatico = eraPredeterminado || eraTituloAutomaticoAnterior || eraTituloConExpediente
+                || tituloInicial.equals(tituloAuditoria(calendario));
+        final String[] ultimoTituloAutomatico = {tituloAutomatico ? tituloInicial : null};
+        entrada.getProperties().put(PROPIEDAD_LISTENER_TITULO_AUDITORIA, true);
+        entrada.calendarProperty().addListener((observable, anterior, nuevo) -> {
+            if (nuevo == null) return;
+            String tituloActual = entrada.getTitle();
+            if (ultimoTituloAutomatico[0] != null && tituloActual.equals(ultimoTituloAutomatico[0])) {
+                ultimoTituloAutomatico[0] = tituloAuditoria(nuevo);
+                entrada.setTitle(ultimoTituloAutomatico[0]);
+            }
+        });
+    }
+
+    private static String tituloAuditoria(Calendar calendario) {
+        return "Auditoría — " + calendario.getName();
     }
 
     /** Aviso modal, con owner y siempre al frente, para que no quede detrás de la app. */
@@ -588,6 +1035,15 @@ public class CalendarApp extends Application {
             agregarNotificacion.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
             agregarNotificacion.setTooltip(
                     new javafx.scene.control.Tooltip("Agregar notificación al evento"));
+
+            Entry<?> base = entradaBase(panel.getEntry());
+            Notificacion existente = buscarNotificacionDe(base);
+            if (existente != null) {
+                agregarNotificacion.setText("Notificación · vence "
+                        + formatoFecha(existente.getFechaLimite()));
+            }
+            agregarNotificacion.setOnAction(evento -> abrirDialogoNotificacion(panel.getEntry()));
+
             grilla.add(agregarNotificacion,
                     columna == null ? 0 : columna, fila == null ? 1 : fila);
             return;
@@ -598,6 +1054,212 @@ public class CalendarApp extends Application {
     private void actualizarNotificaciones(boolean hay) {
         hayNotificaciones = hay;
         if (botonNotificaciones != null) botonNotificaciones.marcar(hay);
+    }
+
+    // ---------- Notificaciones ----------
+
+    /** Abre el diálogo para adjuntar el Word y definir el plazo de la notificación. */
+    private void abrirDialogoNotificacion(Entry<?> entrada) {
+        Entry<?> base = entradaBase(entrada);
+        if (base == null) return;
+        Notificacion existente = buscarNotificacionDe(base);
+        DialogoNotificacion dialogo = new DialogoNotificacion(
+                ventana, existente, archivoNotificacion(existente));
+        dialogo.showAndWait().ifPresent(resultado ->
+                guardarResultadoNotificacion(base, existente, resultado));
+    }
+
+    private void guardarResultadoNotificacion(Entry<?> entrada, Notificacion existente,
+                                              DialogoNotificacion.Resultado resultado) {
+        try {
+            Notificacion notificacion = existente != null ? existente : new Notificacion();
+            if (resultado.isEliminarArchivo()) {
+                notificacion.setArchivo("");
+                borrarCarpetaNotificacion(notificacion.getId());
+            } else if (resultado.getArchivo() != null) {
+                notificacion.setArchivo(
+                        guardarArchivoNotificacion(notificacion.getId(), resultado.getArchivo()));
+            }
+            notificacion.setFechaLimite(resultado.getFechaLimite());
+            notificacion.setDescripcion(resultado.getDescripcion());
+            notificacion.setTituloEvento(entrada.getTitle());
+            notificacion.setFechaEvento(entrada.getInterval().getStartDateTime());
+            notificacion.setAtendida(false);
+
+            if (existente == null) {
+                notificaciones.add(notificacion);
+                entrada.getProperties().put(PROPIEDAD_NOTIFICACION, notificacion.getId());
+            }
+
+            guardarNotificaciones();
+            guardarEventos();
+            actualizarEstadoNotificaciones();
+            mostrarAlerta(Alert.AlertType.INFORMATION, "Notificación guardada",
+                    "La campana se pondrá roja a partir del "
+                            + formatoFecha(notificacion.getFechaLimite()) + ".");
+        } catch (IOException ex) {
+            mostrarAlerta(Alert.AlertType.ERROR, "No se pudo guardar la notificación",
+                    "No se pudo copiar el documento:\n" + ex.getMessage());
+        }
+    }
+
+    private Path archivoNotificacion(Notificacion notificacion) {
+        if (notificacion == null || notificacion.getArchivo().isBlank()) return null;
+        Path carpeta = CARPETA.resolve("notificaciones").resolve(notificacion.getId()).normalize();
+        Path archivo = carpeta.resolve(notificacion.getArchivo()).normalize();
+        return archivo.startsWith(carpeta) ? archivo : null;
+    }
+
+    /** Copia el Word elegido a la carpeta de datos y devuelve el nombre guardado. */
+    private String guardarArchivoNotificacion(String id, Path origen) throws IOException {
+        Path carpeta = CARPETA.resolve("notificaciones").resolve(id);
+        Files.createDirectories(carpeta);
+        Path destino = carpeta.resolve(origen.getFileName().toString());
+        Files.copy(origen, destino, StandardCopyOption.REPLACE_EXISTING);
+        // Si el archivo anterior tenía otro nombre, lo quitamos.
+        try (var archivos = Files.list(carpeta)) {
+            for (Path anterior : archivos.toArray(Path[]::new)) {
+                if (!anterior.equals(destino)) Files.deleteIfExists(anterior);
+            }
+        }
+        return destino.getFileName().toString();
+    }
+
+    private void borrarCarpetaNotificacion(String id) {
+        Path carpeta = CARPETA.resolve("notificaciones").resolve(id);
+        if (!Files.exists(carpeta)) return;
+        try (var archivos = Files.walk(carpeta)) {
+            for (Path ruta : archivos.sorted(Comparator.reverseOrder()).toArray(Path[]::new)) {
+                Files.deleteIfExists(ruta);
+            }
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    /** Si el evento es una repetición, devuelve el evento original donde se guardan los datos. */
+    private static Entry<?> entradaBase(Entry<?> entrada) {
+        if (entrada == null) return null;
+        if (entrada.isRecurrence()) {
+            Entry<?> origen = entrada.getRecurrenceSourceEntry();
+            if (origen != null) return origen;
+        }
+        return entrada;
+    }
+
+    private Notificacion buscarNotificacionDe(Entry<?> entrada) {
+        if (entrada == null) return null;
+        Object id = entrada.getProperties().get(PROPIEDAD_NOTIFICACION);
+        if (!(id instanceof String)) return null;
+        for (Notificacion notificacion : notificaciones) {
+            if (notificacion.getId().equals(id)) return notificacion;
+        }
+        return null;
+    }
+
+    private Entry<?> buscarEntradaDeNotificacion(String id) {
+        for (Entry<?> entrada : entradas) {
+            if (id.equals(entrada.getProperties().get(PROPIEDAD_NOTIFICACION))) return entrada;
+        }
+        return null;
+    }
+
+    /** Elimina la notificación asociada a un evento (y su archivo). */
+    private void eliminarNotificacionDe(Entry<?> entrada) {
+        Object id = entrada.getProperties().get(PROPIEDAD_NOTIFICACION);
+        if (!(id instanceof String)) return;
+        boolean quitada = notificaciones.removeIf(notificacion -> {
+            if (!notificacion.getId().equals(id)) return false;
+            borrarCarpetaNotificacion(notificacion.getId());
+            return true;
+        });
+        entrada.getProperties().remove(PROPIEDAD_NOTIFICACION);
+        if (quitada) {
+            guardarNotificaciones();
+            actualizarEstadoNotificaciones();
+        }
+    }
+
+    /** Revisa los vencimientos y pone la campana roja si hay alguna notificación vencida. */
+    private void actualizarEstadoNotificaciones() {
+        LocalDate hoy = LocalDate.now(ZONA_ARGENTINA);
+        boolean hay = false;
+        for (Notificacion notificacion : notificaciones) {
+            if (notificacion.estaVencida(hoy)) {
+                hay = true;
+                break;
+            }
+        }
+        actualizarNotificaciones(hay);
+    }
+
+    private void iniciarControlNotificaciones() {
+        controlNotificaciones = new Timeline(
+                new KeyFrame(Duration.seconds(60), evento -> actualizarEstadoNotificaciones()));
+        controlNotificaciones.setCycleCount(Timeline.INDEFINITE);
+        controlNotificaciones.play();
+    }
+
+    /**
+     * Al presionar la campana muestra las notificaciones vencidas. Si hay una sola,
+     * abre directamente el evento en la barra de búsqueda; si hay varias, deja elegir.
+     */
+    private void abrirNotificacionesPendientes() {
+        LocalDate hoy = LocalDate.now(ZONA_ARGENTINA);
+        List<Notificacion> pendientes = new ArrayList<>();
+        for (Notificacion notificacion : notificaciones) {
+            if (notificacion.estaVencida(hoy)) pendientes.add(notificacion);
+        }
+        pendientes.sort(Comparator.comparing(Notificacion::getFechaLimite,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+
+        if (pendientes.isEmpty()) {
+            mostrarAlerta(Alert.AlertType.INFORMATION, "Notificaciones",
+                    "No hay notificaciones vencidas.");
+            return;
+        }
+
+        if (pendientes.size() == 1) {
+            mostrarEventoDeNotificacion(pendientes.get(0));
+            return;
+        }
+
+        List<String> opciones = new ArrayList<>();
+        for (Notificacion notificacion : pendientes) {
+            opciones.add(descripcionNotificacion(notificacion));
+        }
+
+        ChoiceDialog<String> elegir = new ChoiceDialog<>(opciones.get(0), opciones);
+        elegir.setTitle("Notificaciones vencidas");
+        elegir.setHeaderText("Elegí la notificación que querés ver:");
+        elegir.setContentText("Notificación:");
+        if (ventana != null) elegir.initOwner(ventana);
+        elegir.showAndWait().ifPresent(opcion -> {
+            int indice = opciones.indexOf(opcion);
+            if (indice >= 0) mostrarEventoDeNotificacion(pendientes.get(indice));
+        });
+    }
+
+    private void mostrarEventoDeNotificacion(Notificacion notificacion) {
+        Entry<?> entrada = buscarEntradaDeNotificacion(notificacion.getId());
+        if (entrada == null) {
+            mostrarAlerta(Alert.AlertType.WARNING, "Notificación",
+                    "El evento asociado a esta notificación ya no existe.");
+            return;
+        }
+        if (datos != null) datos.mostrarEvento(entrada);
+    }
+
+    private static String descripcionNotificacion(Notificacion notificacion) {
+        String titulo = notificacion.getTituloEvento();
+        if (titulo == null || titulo.isBlank()) titulo = "(sin título)";
+        return titulo + " — vence " + formatoFecha(notificacion.getFechaLimite());
+    }
+
+    private static String formatoFecha(LocalDate fecha) {
+        if (fecha == null) return "";
+        return String.format("%02d/%02d/%04d",
+                fecha.getDayOfMonth(), fecha.getMonthValue(), fecha.getYear());
     }
 
     /** Abre la aplicación Demo como ventana interactiva sobre el calendario. */
@@ -657,6 +1319,12 @@ public class CalendarApp extends Application {
                 calendarView.getEntryContextMenuCallback();
         calendarView.setEntryContextMenuCallback(param -> {
             ContextMenu menu = callbackOriginal.call(param);
+            Entry<?> entradaMenu = param.getEntry();
+            if (menu != null && entradaMenu != null) {
+                MenuItem copiar = new MenuItem("Copiar");
+                copiar.setOnAction(evento -> copiarEvento(entradaMenu));
+                menu.getItems().add(0, copiar);
+            }
             if (menu != null) {
                 menu.getItems().removeIf(item -> item instanceof Menu
                         && "Calendario".equalsIgnoreCase(item.getText()));
@@ -708,6 +1376,71 @@ public class CalendarApp extends Application {
             }
             return menu;
         });
+
+        javafx.util.Callback<DateControl.ContextMenuParameter, ContextMenu> callbackVacioOriginal =
+                calendarView.getContextMenuCallback();
+        calendarView.setContextMenuCallback(param -> {
+            ContextMenu menu = callbackVacioOriginal == null ? null : callbackVacioOriginal.call(param);
+            if (menu != null) {
+                for (MenuItem item : menu.getItems()) {
+                    if (item.getText() != null
+                            && (item.getText().equalsIgnoreCase("Nuevo evento")
+                            || item.getText().equalsIgnoreCase("New Event")
+                            || item.getText().equalsIgnoreCase(
+                                    Messages.getString("ContextMenuProvider.ADD_NEW_EVENT")))) {
+                        item.setText("Auditoría");
+                    }
+                }
+            }
+            if (eventoCopiado == null || calendarioEventoCopiado == null
+                    || calendarioEventoCopiado.isReadOnly()) return menu;
+
+            if (menu == null) menu = new ContextMenu();
+            if (!menu.getItems().isEmpty()) menu.getItems().add(new javafx.scene.control.SeparatorMenuItem());
+            MenuItem pegar = new MenuItem("Pegar");
+            pegar.setOnAction(evento -> pegarEvento(param));
+            menu.getItems().add(pegar);
+            return menu;
+        });
+    }
+
+    /** Guarda una copia independiente de los datos básicos del evento seleccionado. */
+    private void copiarEvento(Entry<?> entrada) {
+        if (entrada == null || entrada.getCalendar() == null || entrada.getCalendar().isReadOnly()) return;
+        Entry<Object> copia = new Entry<>(entrada.getTitle());
+        copia.setInterval(entrada.getInterval());
+        copia.setFullDay(false);
+        copia.setLocation(entrada.getLocation());
+        Object actividad = entrada.getProperties().get(PROPIEDAD_ACTIVIDAD);
+        if (actividad != null) copia.getProperties().put(PROPIEDAD_ACTIVIDAD, actividad);
+        eventoCopiado = copia;
+        calendarioEventoCopiado = entrada.getCalendar();
+    }
+
+    /** Pega el evento copiado en el día señalado, conservando su horario y duración. */
+    private void pegarEvento(DateControl.ContextMenuParameter parametro) {
+        if (eventoCopiado == null || calendarioEventoCopiado == null
+                || calendarioEventoCopiado.isReadOnly()) return;
+
+        LocalDate fechaOrigen = eventoCopiado.getInterval().getStartDateTime().toLocalDate();
+        LocalDate fechaDestino = parametro.getZonedDateTime().toLocalDate();
+        long dias = java.time.temporal.ChronoUnit.DAYS.between(fechaOrigen, fechaDestino);
+        Interval intervaloOrigen = eventoCopiado.getInterval();
+        Interval intervalo = new Interval(
+                intervaloOrigen.getStartDateTime().plusDays(dias),
+                intervaloOrigen.getEndDateTime().plusDays(dias),
+                intervaloOrigen.getZoneId());
+
+        Entry<Object> pegada = new Entry<>(eventoCopiado.getTitle());
+        pegada.setInterval(intervalo);
+        pegada.setFullDay(false);
+        pegada.setLocation(eventoCopiado.getLocation());
+        Object actividad = eventoCopiado.getProperties().get(PROPIEDAD_ACTIVIDAD);
+        if (actividad != null) pegada.getProperties().put(PROPIEDAD_ACTIVIDAD, actividad);
+        calendarioEventoCopiado.addEntry(pegada);
+        entradas.add(pegada);
+        guardarEventos();
+        if (datos != null) datos.refrescar();
     }
 
     private List<String> nombresActividades() {
@@ -790,8 +1523,12 @@ public class CalendarApp extends Application {
     private void alCambiar(CalendarEvent e) {
         Entry<?> entrada = e.getEntry();
         if (entrada != null && !entrada.isRecurrence()) {
-            if (entrada.getCalendar() != null) entradas.add(entrada);
-            else entradas.remove(entrada);
+            if (entrada.getCalendar() != null) {
+                entradas.add(entrada);
+            } else {
+                entradas.remove(entrada);
+                if (!cargando) eliminarNotificacionDe(entrada);
+            }
         }
         if (!cargando && datos != null) datos.refrescar();
         if (!cargando) guardadoPendiente.playFromStart();
@@ -813,7 +1550,8 @@ public class CalendarApp extends Application {
                     intervalo.getZoneId().getId(),
                     cod(en.getRecurrenceRule()),
                     cod(String.valueOf(en.getProperties().getOrDefault(PROPIEDAD_ACTIVIDAD, ""))),
-                    cod(String.valueOf(en.getProperties().getOrDefault(PROPIEDAD_EXPEDIENTE, "")))));
+                    cod(String.valueOf(en.getProperties().getOrDefault(PROPIEDAD_EXPEDIENTE, ""))),
+                    cod(String.valueOf(en.getProperties().getOrDefault(PROPIEDAD_NOTIFICACION, "")))));
         }
         escribir(ARCHIVO_EVENTOS, lineas);
     }
@@ -841,6 +1579,9 @@ public class CalendarApp extends Application {
                 if (f.length >= 10 && !dec(f[9]).isBlank()) {
                     entrada.getProperties().put(PROPIEDAD_EXPEDIENTE, dec(f[9]));
                 }
+                if (f.length >= 11 && !dec(f[10]).isBlank()) {
+                    entrada.getProperties().put(PROPIEDAD_NOTIFICACION, dec(f[10]));
+                }
 
                 calendario.addEntry(entrada);
                 entradas.add(entrada);
@@ -849,6 +1590,20 @@ public class CalendarApp extends Application {
             }
         }
         cargando = false;
+    }
+
+    private void cargarNotificaciones() {
+        for (String linea : leer(ARCHIVO_NOTIFICACIONES)) {
+            if (linea.isBlank()) continue;
+            Notificacion notificacion = Notificacion.desdeLinea(linea);
+            if (notificacion != null) notificaciones.add(notificacion);
+        }
+    }
+
+    private void guardarNotificaciones() {
+        List<String> lineas = new ArrayList<>();
+        for (Notificacion notificacion : notificaciones) lineas.add(notificacion.toLinea());
+        escribir(ARCHIVO_NOTIFICACIONES, lineas);
     }
 
     // ---------- Formulario FormsFX ----------

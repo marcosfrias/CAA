@@ -31,7 +31,7 @@ final class DialogoExportacionExpediente {
     private DialogoExportacionExpediente() {
     }
 
-    static void abrir(String nombreExpediente, String contenido, List<File> imagenes,
+    static void abrir(String nombreExpediente, String contenido, List<String> tablas, List<File> imagenes,
                       DisposicionImagenes disposicion, File firma, double anchoFirmaCm, Window owner) {
         List<File> imagenesOrdenadas = disposicion.ordenar(imagenes);
         CheckBox word = new CheckBox("Word (.docx)");
@@ -142,7 +142,7 @@ final class DialogoExportacionExpediente {
             if (carpeta == null) return;
             try {
                 ExportadorExpediente.exportar(
-                        nombreExpediente, contenido, carpeta.toPath(), formatos, imagenesOrdenadas,
+                        nombreExpediente, contenido, tablas, carpeta.toPath(), formatos, imagenesOrdenadas,
                         disposicion, firma, anchoFirmaCm);
                 Alert confirmacion = new Alert(Alert.AlertType.INFORMATION);
                 confirmacion.setTitle("Exportación completa");

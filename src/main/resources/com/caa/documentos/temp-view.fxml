@@ -46,6 +46,7 @@
                                               wrapText="true"
                                               style="-fx-padding: 8;"/>
                                     <FlowPane fx:id="imagenesInsertadas" hgap="12" vgap="12"/>
+                                    <VBox fx:id="tablasInsertadas" spacing="8" visible="false" managed="false"/>
                                     <VBox fx:id="zonaFirma" spacing="6" visible="false" managed="false"
                                           style="-fx-padding: 12 0 0 0;">
                                         <Label text="Firma" style="-fx-font-weight: bold;"/>

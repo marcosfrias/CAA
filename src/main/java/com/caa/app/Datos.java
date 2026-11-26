@@ -133,6 +133,18 @@ public final class Datos {
         buscar(campo.getText());
     }
 
+    /** Muestra en la barra de búsqueda el evento indicado. */
+    public void mostrarEvento(Entry<?> entrada) {
+        if (entrada == null) return;
+        filtro.setValue(NOMBRE);
+        if (entrada.getCalendar() != null) {
+            campo.setText(entrada.getCalendar().getName());
+        } else {
+            campo.setText(entrada.getTitle());
+        }
+        Platform.runLater(() -> mostrarResultados(new ArrayList<>(List.of(entrada))));
+    }
+
     private void actualizarCategorias() {
         String seleccionActual = selectorCategoria.getValue();
         List<String> nombres = new ArrayList<>();

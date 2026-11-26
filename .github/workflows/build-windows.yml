@@ -1,0 +1,44 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build portable ZIP + instalador EXE
+        shell: pwsh
+        run: |
+          # windows-latest ya trae WiX 3.x; lo agregamos al PATH por si acaso.
+          $wix = Get-ChildItem 'C:\Program Files (x86)\WiX Toolset v3*\bin' -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          if ($wix) { $env:PATH = "$($wix.FullName);$env:PATH" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Installer
+
+      - name: Subir portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAA-windows-portable
+          path: dist\*.zip
+          if-no-files-found: error
+
+      - name: Subir instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: CAA-windows-installer
+          path: dist\*.exe
+          if-no-files-found: error
