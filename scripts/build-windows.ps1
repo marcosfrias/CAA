@@ -28,6 +28,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# En PowerShell 7+, los comandos nativos que escriben en stderr pueden
+# convertirse en errores terminating. java -version escribe justo en stderr.
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 $raiz = Split-Path -Parent $PSScriptRoot
 $pom = Join-Path $raiz 'pom.xml'
@@ -60,7 +65,14 @@ if ($env:JAVA_HOME) {
     $candidatoJava = Join-Path $env:JAVA_HOME 'bin\java.exe'
     if (Test-Path $candidatoJava) { $java = $candidatoJava }
 }
-$textoJava = & $java '-version' 2>&1 | Out-String
+$preferenciaAnterior = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $textoJava = & $java '-version' 2>&1 | Out-String
+}
+finally {
+    $ErrorActionPreference = $preferenciaAnterior
+}
 if ($textoJava -notmatch 'version\s+"?(\d+)(?:\.(\d+))?') {
     throw "No se pudo leer la version de Java. Salida: $textoJava"
 }
@@ -150,11 +162,11 @@ Compress-Archive -Path $image -DestinationPath $zip -Force
 
 if ($Installer) {
     if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
-        $wixBins = Get-ChildItem `
-            'C:\Program Files (x86)\WiX Toolset v3*\bin', `
-            'C:\Program Files\WiX Toolset v3*\bin' `
+        $wixCandles = Get-ChildItem `
+            'C:\Program Files (x86)\WiX Toolset v3*\bin\candle.exe', `
+            'C:\Program Files\WiX Toolset v3*\bin\candle.exe' `
             -ErrorAction SilentlyContinue
-        foreach ($dir in $wixBins) { $env:PATH = "$($dir.FullName);$env:PATH" }
+        foreach ($c in $wixCandles) { $env:PATH = "$($c.DirectoryName);$env:PATH" }
     }
     $candle = Get-Command candle.exe -ErrorAction SilentlyContinue
     $light = Get-Command light.exe -ErrorAction SilentlyContinue

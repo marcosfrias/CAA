@@ -24,10 +24,10 @@ jobs:
         shell: pwsh
         run: |
           # windows-latest ya trae WiX 3.x; lo agregamos al PATH por si acaso.
-          $wix = Get-ChildItem 'C:\Program Files (x86)\WiX Toolset v3*\bin' -ErrorAction SilentlyContinue |
+          $wix = Get-ChildItem 'C:\Program Files (x86)\WiX Toolset v3*\bin\candle.exe' -ErrorAction SilentlyContinue |
               Select-Object -First 1
-          if ($wix) { $env:PATH = "$($wix.FullName);$env:PATH" }
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Installer
+          if ($wix) { $env:PATH = "$($wix.DirectoryName);$env:PATH" }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Installer
 
       - name: Subir portable
         uses: actions/upload-artifact@v4
