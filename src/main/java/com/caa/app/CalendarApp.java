@@ -382,6 +382,8 @@ public class CalendarApp extends Application {
                 + "\nActividades nuevas: " + actividadesNuevas.size()
                 + "\nEventos nuevos: " + eventosNuevos + " (" + fechasValidas + " fechas válidas)"
                 + (resultado.fechasInvalidas == 0 ? "" : "\nFechas que se omitirán por formato inválido: " + resultado.fechasInvalidas)
+                + "\n\nFormato de fechas aceptado: dd/MM/aaaa (ej. 25/11/2026), aaaa-MM-dd o dd/MM/aa."
+                + "\nTambién se aceptan fechas reconocidas por Excel. El encabezado de la columna debe incluir la palabra FECHA."
                 + "\n\nLos eventos se agendarán a las 10:00 y durarán una hora. ¿Continuar?";
         Alert confirmar = new Alert(Alert.AlertType.CONFIRMATION, resumen, ButtonType.OK, ButtonType.CANCEL);
         confirmar.setTitle("Confirmar importación");
