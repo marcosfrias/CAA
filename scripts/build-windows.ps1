@@ -131,6 +131,23 @@ $jar = Join-Path $raiz "target\$artifactId-$version.jar"
 if (-not (Test-Path $jar)) { throw "No se genero el JAR: $jar" }
 Copy-Item -Force $jar $appDir
 
+# ---------- Runtime JLink ----------
+# jdk.localedata es necesario para que java.time tenga meses/dias en espanol.
+# --include-locales=es,en evita incluir los datos de todos los idiomas.
+$jdkHome = Split-Path -Parent (Split-Path -Parent $jpackage)
+$jlink = Join-Path $jdkHome 'bin\jlink.exe'
+$jmods = Join-Path $jdkHome 'jmods'
+if (-not (Test-Path $jlink)) { throw "No se encontro jlink.exe en: $jdkHome" }
+
+$runtime = Join-Path $stage 'runtime'
+Write-Host 'Generando runtime con jlink (jdk.localedata, solo es/en)...'
+& $jlink '--module-path' $jmods `
+    '--add-modules' 'java.base,java.desktop,java.xml,java.logging,java.scripting,jdk.unsupported,jdk.localedata' `
+    '--include-locales=es,en' `
+    '--strip-debug' '--no-header-files' '--no-man-pages' '--strip-native-commands' '--compress=2' `
+    '--output' $runtime
+if ($LASTEXITCODE -ne 0) { throw 'Falló jlink al generar el runtime.' }
+
 # ---------- jpackage ----------
 # Ojo: NO se pasa --win-console. Eso hace que el .exe sea de interfaz grafica
 # y no abra una ventana de consola negra al iniciar.
@@ -142,8 +159,7 @@ $comunes = @(
     '--main-jar', "$artifactId-$version.jar",
     '--main-class', 'com.caa.app.Lanzador',
     '--icon', $icono,
-    '--add-modules', 'java.base,java.desktop,java.xml,java.logging,java.scripting,jdk.unsupported',
-    '--jlink-options', '--strip-debug --no-header-files --no-man-pages --strip-native-commands --compress=2',
+    '--runtime-image', $runtime,
     '--java-options', '-Dfile.encoding=UTF-8',
     '--java-options', '-Duser.language=es',
     '--java-options', '-Duser.country=AR'

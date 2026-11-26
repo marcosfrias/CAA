@@ -29,13 +29,14 @@ No se puede generar un `.exe` de Windows desde Linux/macOS: `jpackage` solo empa
 
 ## Qué se optimiza
 
-- `jlink` crea un runtime privado con solo los módulos JDK necesarios (`java.base`, `java.desktop`, `java.xml`, `java.logging`, `java.scripting`, `jdk.unsupported`) en vez del JDK completo.
+- `jlink` crea un runtime privado con solo los módulos JDK necesarios (`java.base`, `java.desktop`, `java.xml`, `java.logging`, `java.scripting`, `jdk.unsupported`, **`jdk.localedata`**) en vez del JDK completo.
+- `--include-locales=es,en` mantiene los datos de idioma español e inglés sin incluir todos los idiomas: son los meses/días en español y apenas ~1 MB extra.
 - `--strip-debug --no-header-files --no-man-pages --strip-native-commands --compress=2` reduce el runtime.
 - Se copian solo dependencias de ejecución; se excluyen JUnit/Mockito/Hamcrest que hereda el POM padre.
 - No se empaquetan los 16 MB de `datos/expedientes` ni código fuente.
 - `com.caa.app.Lanzador` es el `main` del ejecutable: evita el chequeo de modularidad de JavaFX 19 cuando las librerías van en el classpath.
 
-Tamaño orientativo medido con este mismo método: imagen de aplicación ~81 MB sin comprimir (runtime recortado ~49 MB + JARs ~32 MB). El ZIP final queda en el orden de 50–70 MB. El instalador con WiX suele ser algo menor porque comprime el contenido.
+Tamaño orientativo medido con este mismo método: imagen de aplicación ~82 MB sin comprimir (runtime recortado ~50 MB con `jdk.localedata` para es/en + JARs ~32 MB). El ZIP final queda en el orden de 50–70 MB. El instalador con WiX suele ser algo menor porque comprime el contenido.
 
 ## Por qué no un "único archivo EXE"
 
