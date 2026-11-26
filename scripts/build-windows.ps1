@@ -144,7 +144,9 @@ $comunes = @(
     '--icon', $icono,
     '--add-modules', 'java.base,java.desktop,java.xml,java.logging,java.scripting,jdk.unsupported',
     '--jlink-options', '--strip-debug --no-header-files --no-man-pages --strip-native-commands --compress=2',
-    '--java-options', '-Dfile.encoding=UTF-8'
+    '--java-options', '-Dfile.encoding=UTF-8',
+    '--java-options', '-Duser.language=es',
+    '--java-options', '-Duser.country=AR'
 )
 
 Write-Host 'Generando imagen de aplicacion (runtime recortado)...'
