@@ -128,6 +128,9 @@ public class CalendarApp extends Application {
 
     @Override
     public void start(Stage stage) {
+        // CalendarFX resuelve textos y nombres de días al crear sus controles.
+        // Fijar el locale aquí también cubre los lanzamientos directos de esta clase.
+        fijarLocaleArgentina();
         ventana = stage;
         try {
             Almacenamiento.inicializar();
@@ -1730,10 +1733,14 @@ public class CalendarApp extends Application {
     }
 
     public static void main(String[] args) {
+        fijarLocaleArgentina();
+        launch(args);
+    }
+
+    static void fijarLocaleArgentina() {
         Locale argentina = Locale.forLanguageTag("es-AR");
         Locale.setDefault(argentina);
         Locale.setDefault(Locale.Category.DISPLAY, argentina);
         Locale.setDefault(Locale.Category.FORMAT, argentina);
-        launch(args);
     }
 }
